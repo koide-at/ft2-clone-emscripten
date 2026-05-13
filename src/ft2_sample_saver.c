@@ -15,6 +15,9 @@
 #include "ft2_diskop.h"
 #include "ft2_mouse.h"
 #include "ft2_structs.h"
+#ifdef __EMSCRIPTEN__
+#include "ft2_emscripten.h"
+#endif
 
 typedef struct wavHeader_t
 {
@@ -252,7 +255,7 @@ static bool saveIFFSample(UNICHAR *filenameU, bool saveRangedData)
 	iffWriteUint32(f, 0); // samplesPerHiCycle
 
 	// samplesPerSec
-	uint32_t tmp32 = getSampleC4Hz(smp);
+	uint32_t tmp32 = getSampleMiddleCRate(smp);
 	if (tmp32 == 0 || tmp32 > 65535) tmp32 = 16726;
 	iffWriteUint16(f, (uint16_t)tmp32);
 
@@ -365,7 +368,7 @@ static bool saveWAVSample(UNICHAR *filenameU, bool saveRangedData)
 	wavHeader.subchunk1Size = 16;
 	wavHeader.audioFormat = 1;
 	wavHeader.numChannels = 1;
-	wavHeader.sampleRate = getSampleC4Hz(smp);
+	wavHeader.sampleRate = getSampleMiddleCRate(smp);
 	wavHeader.byteRate = (wavHeader.sampleRate * wavHeader.numChannels * sampleBitDepth) / 8;
 	wavHeader.blockAlign = (wavHeader.numChannels * sampleBitDepth) / 8;
 	wavHeader.bitsPerSample = sampleBitDepth;
@@ -523,6 +526,12 @@ static int32_t saveSampleThread(void *ptr)
 	if (saveRangeFlag)
 		UNICHAR_CHDIR(oldPathU);
 
+#ifdef __EMSCRIPTEN__
+	if (editor.tmpFilenameU != NULL)
+		ft2_ems_offer_download_path((const char *)editor.tmpFilenameU);
+	ft2_ems_sync_fs_out();
+#endif
+
 	return true;
 
 	(void)ptr;
@@ -534,6 +543,11 @@ void saveSample(UNICHAR *filenameU, bool saveAsRange)
 	UNICHAR_STRCPY(editor.tmpFilenameU, filenameU);
 
 	mouseAnimOn();
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	saveSampleThread(NULL);
+	return;
+#endif
+
 	thread = SDL_CreateThread(saveSampleThread, "sample save thread", NULL);
 	if (thread == NULL)
 	{

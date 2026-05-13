@@ -865,6 +865,13 @@ void readMouseXY(void)
 	}
 	else
 	{
+#ifdef __EMSCRIPTEN__
+		/* Browser build: global mouse/window position math introduces offset. */
+		mouse.buttonState = SDL_GetMouseState(&mx, &my);
+
+		mouse.absX = mx;
+		mouse.absY = my;
+#else
 		mouse.buttonState = SDL_GetGlobalMouseState(&mx, &my);
 
 		mouse.absX = mx;
@@ -875,6 +882,7 @@ void readMouseXY(void)
 
 		mx -= windowX;
 		my -= windowY;
+#endif
 	}
 
 	mouse.rawX = mx;

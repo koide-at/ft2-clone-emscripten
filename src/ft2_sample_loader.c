@@ -259,6 +259,10 @@ bool loadSample(UNICHAR *filenameU, uint8_t smpNr, bool instrFlag)
 	UNICHAR_STRCPY(editor.tmpFilenameU, filenameU);
 
 	mouseAnimOn();
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	return loadSampleThread(NULL) != 0;
+#endif
+
 	thread = SDL_CreateThread(loadSampleThread, "sample load thread", NULL);
 	if (thread == NULL)
 	{

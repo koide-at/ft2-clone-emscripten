@@ -9,6 +9,11 @@
 
 #include <stdio.h>
 #include <stdbool.h>
+#include <stdlib.h>
+#ifdef __EMSCRIPTEN__
+#include <stdint.h>
+#include <emscripten.h>
+#endif
 #include "ft2_header.h"
 #include "ft2_edit.h"
 #include "ft2_config.h"
@@ -18,7 +23,9 @@
 #include "ft2_mouse.h"
 #include "ft2_pattern_ed.h"
 #include "ft2_structs.h"
+#ifndef __EMSCRIPTEN__
 #include "rtmidi/rtmidi_c.h"
+#endif
 
 // hide POSIX warnings
 #ifdef _MSC_VER
@@ -29,7 +36,107 @@ midi_t midi; // globalized
 
 static volatile bool midiDeviceOpened;
 static bool recMIDIValidChn = true;
+#ifndef __EMSCRIPTEN__
 static volatile RtMidiPtr midiInDev;
+#else
+static void *midiInDev;
+#endif
+
+static void midiInCallback(double timeStamp, const unsigned char *message, size_t messageSize, void *userData);
+
+#ifdef __EMSCRIPTEN__
+EM_JS(int, ft2_midi_web_poll_status, (void), {
+	return Module.ft2MidiPoll | 0;
+});
+
+EM_JS(void, ft2_midi_web_init_or_refresh, (void), {
+	if (Module.ft2MidiAccess)
+	{
+		Module.ft2MidiPorts = [];
+		Module.ft2MidiAccess.inputs.forEach(function (p) {
+			Module.ft2MidiPorts.push(p);
+		});
+		return;
+	}
+	Module.ft2MidiPoll = 0;
+	Module.ft2MidiPorts = [];
+	if (!navigator.requestMIDIAccess)
+	{
+		Module.ft2MidiPoll = -1;
+		return;
+	}
+	navigator.requestMIDIAccess({ sysex: false }).then(
+		function (access)
+		{
+			Module.ft2MidiAccess = access;
+			function refresh()
+			{
+				Module.ft2MidiPorts = [];
+				access.inputs.forEach(function (port) {
+					Module.ft2MidiPorts.push(port);
+				});
+			}
+			refresh();
+			access.onstatechange = function () { refresh(); };
+			Module.ft2MidiPoll = 1;
+		},
+		function () { Module.ft2MidiPoll = -1; }
+	);
+});
+
+EM_JS(void, ft2_midi_web_close_js_port, (void), {
+	if (Module.ft2MidiOpenPort)
+	{
+		try
+		{
+			Module.ft2MidiOpenPort.onmidimessage = null;
+			Module.ft2MidiOpenPort.close();
+		}
+		catch (e) {}
+		Module.ft2MidiOpenPort = null;
+	}
+});
+
+EM_JS(int, ft2_midi_web_try_open, (uint32_t idx), {
+	try {
+		if (Module.ft2MidiOpenPort)
+		{
+			try
+			{
+				Module.ft2MidiOpenPort.onmidimessage = null;
+				Module.ft2MidiOpenPort.close();
+			}
+			catch (e) {}
+			Module.ft2MidiOpenPort = null;
+		}
+		if (!Module.ft2MidiPorts || idx >= Module.ft2MidiPorts.length)
+			return 0;
+		var port = Module.ft2MidiPorts[idx];
+		port.onmidimessage = function (ev)
+		{
+			var d = ev.data;
+			var l = d.length;
+			if (l < 2)
+				return;
+			Module._ft2_midi_c_dispatch(d[0]|0, (l > 1 ? d[1] : 0)|0, (l > 2 ? d[2] : 0)|0, l|0);
+		};
+		port.open();
+		Module.ft2MidiOpenPort = port;
+		return 1;
+	} catch (e) {
+		return 0;
+	}
+});
+
+EMSCRIPTEN_KEEPALIVE void ft2_midi_c_dispatch(int32_t a, int32_t b, int32_t c, int32_t len)
+{
+	unsigned char msg[3];
+	msg[0] = (unsigned char)a;
+	msg[1] = (unsigned char)b;
+	msg[2] = (unsigned char)c;
+	midiInCallback(0, msg, (size_t)len, NULL);
+}
+#endif
 
 static inline void midiInSetChannel(uint8_t status)
 {
@@ -128,6 +235,7 @@ static void midiInCallback(double timeStamp, const unsigned char *message, size_
 	(void)userData;
 }
 
+#ifndef __EMSCRIPTEN__
 static uint32_t getNumMidiInDevices(void)
 {
 	if (midiInDev == NULL)
@@ -141,19 +249,8 @@ static char *getMidiInDeviceName(uint32_t deviceID)
 	if (midiInDev == NULL)
 		return NULL; // MIDI not initialized
 
-	// get string length
-	int32_t reqStrLen = 0;
-	rtmidi_get_port_name(midiInDev, deviceID, NULL, &reqStrLen);
-	if (!midiInDev->ok)
-		return NULL;
-
-	// allocate memory
-	char *devStr = (char *)malloc(reqStrLen+1);
-	if (devStr == NULL)
-		return NULL;
-
-	rtmidi_get_port_name(midiInDev, deviceID, devStr, &reqStrLen);
-	if (!midiInDev->ok)
+	char *devStr = (char *)rtmidi_get_port_name(midiInDev, deviceID);
+	if (devStr == NULL || !midiInDev->ok)
 		return NULL;
 
 	return devStr;
@@ -219,6 +316,85 @@ bool openMidiInDevice(uint32_t deviceID)
 	midiDeviceOpened = true;
 	return true;
 }
+#else
+static void ft2_midi_web_sync_in_dev_pointer(void)
+{
+	const int st = ft2_midi_web_poll_status();
+
+	if (st > 0)
+		midiInDev = (void *)1;
+	else if (st < 0)
+		midiInDev = NULL;
+}
+
+static uint32_t getNumMidiInDevices(void)
+{
+	const int st = ft2_midi_web_poll_status();
+
+	if (st < 0)
+		return 0;
+	if (st == 0)
+		return 0;
+
+	return (uint32_t)EM_ASM_INT({
+		return Module.ft2MidiPorts ? Module.ft2MidiPorts.length : 0;
+	});
+}
+
+static char *getMidiInDeviceName(uint32_t deviceID)
+{
+	if (ft2_midi_web_poll_status() <= 0)
+		return NULL;
+
+	return (char *)EM_ASM_PTR({
+		var i = $0;
+		if (!Module.ft2MidiPorts || i >= Module.ft2MidiPorts.length)
+			return 0;
+		var s = Module.ft2MidiPorts[i].name || ('MIDI port ' + i);
+		var len = lengthBytesUTF8(s) + 1;
+		var p = _malloc(len);
+		if (!p)
+			return 0;
+		stringToUTF8(s, p, len);
+		return p;
+	}, deviceID);
+}
+
+void closeMidiInDevice(void)
+{
+	if (midiDeviceOpened)
+	{
+		ft2_midi_web_close_js_port();
+		midiDeviceOpened = false;
+	}
+}
+
+void freeMidiIn(void)
+{
+	ft2_midi_web_close_js_port();
+}
+
+bool initMidiIn(void)
+{
+	ft2_midi_web_init_or_refresh();
+	return true;
+}
+
+bool openMidiInDevice(uint32_t deviceID)
+{
+	ft2_midi_web_init_or_refresh();
+	ft2_midi_web_sync_in_dev_pointer();
+
+	if (midiDeviceOpened || midiInDev == NULL || midi.numInputDevices == 0)
+		return false;
+
+	if (!ft2_midi_web_try_open(deviceID))
+		return false;
+
+	midiDeviceOpened = true;
+	return true;
+}
+#endif
 
 void recordMIDIEffect(uint8_t efx, uint8_t efxData)
 {
@@ -261,6 +437,10 @@ void recordMIDIEffect(uint8_t efx, uint8_t efxData)
 
 bool saveMidiInputDeviceToConfig(void)
 {
+#ifdef __EMSCRIPTEN__
+	ft2_midi_web_init_or_refresh();
+	ft2_midi_web_sync_in_dev_pointer();
+#endif
 	if (!midi.initThreadDone || midiInDev == NULL || !midiDeviceOpened)
 		return false;
 
@@ -290,12 +470,39 @@ bool setMidiInputDeviceFromConfig(void)
 {
 	uint32_t i;
 
-	if (midiInDev == NULL || editor.midiConfigFileLocationU == NULL)
+	if (editor.midiConfigFileLocationU == NULL)
 		goto setDefMidiInputDev;
+
+#ifndef __EMSCRIPTEN__
+	if (midiInDev == NULL)
+		goto setDefMidiInputDev;
+#endif
+
+#ifdef __EMSCRIPTEN__
+	ft2_midi_web_init_or_refresh();
+	ft2_midi_web_sync_in_dev_pointer();
+#endif
 
 	const uint32_t numDevices = getNumMidiInDevices();
 	if (numDevices == 0)
+	{
+#ifdef __EMSCRIPTEN__
+		/* Permission prompt still pending; avoid fake "Error configuring MIDI" entry. */
+		if (ft2_midi_web_poll_status() == 0)
+		{
+			if (midi.inputDeviceName != NULL)
+			{
+				free(midi.inputDeviceName);
+				midi.inputDeviceName = NULL;
+			}
+
+			midi.inputDevice = 0;
+			midi.numInputDevices = 0;
+			return false;
+		}
+#endif
 		goto setDefMidiInputDev;
+	}
 
 	FILE *f = UNICHAR_FOPEN(editor.midiConfigFileLocationU, "r");
 	if (f == NULL)
@@ -410,8 +617,25 @@ void drawMidiInputList(void)
 {
 	clearRect(114, 4, 365, 165);
 
+#ifndef __EMSCRIPTEN__
 	if (!midi.initThreadDone || midiInDev == NULL || midi.numInputDevices == 0)
+#else
+	if (!midi.initThreadDone || midi.numInputDevices == 0)
+#endif
 	{
+#ifdef __EMSCRIPTEN__
+		if (midi.initThreadDone && ft2_midi_web_poll_status() == 0)
+		{
+			textOut(114, 4 + (0 * 11), PAL_FORGRND, "Waiting for Web MIDI (allow if the browser asks).");
+			textOut(114, 4 + (1 * 11), PAL_FORGRND, "If no prompt appears, check site permissions for MIDI.");
+			return;
+		}
+		if (ft2_midi_web_poll_status() < 0)
+		{
+			textOut(114, 4 + (0 * 11), PAL_FORGRND, "Web MIDI is not available in this browser.");
+			return;
+		}
+#endif
 		textOut(114, 4 + (0 * 11), PAL_FORGRND, "No MIDI input devices found!");
 		textOut(114, 4 + (1 * 11), PAL_FORGRND, "Either wait a few seconds for MIDI to initialize, or restart the");
 		textOut(114, 4 + (2 * 11), PAL_FORGRND, "tracker if you recently plugged in a MIDI device.");
@@ -498,6 +722,17 @@ bool testMidiInputDeviceListMouseDown(void)
 	closeMidiInDevice();
 	freeMidiIn();
 	initMidiIn();
+#ifdef __EMSCRIPTEN__
+#if defined(__EMSCRIPTEN_PTHREADS__)
+	while (ft2_midi_web_poll_status() == 0)
+		SDL_Delay(5);
+	ft2_midi_web_sync_in_dev_pointer();
+#else
+	ft2_midi_web_init_or_refresh();
+	ft2_midi_web_sync_in_dev_pointer();
+	rescanMidiInputDevices();
+#endif
+#endif
 	openMidiInDevice(midi.inputDevice);
 
 	drawMidiInputList();
@@ -507,6 +742,19 @@ bool testMidiInputDeviceListMouseDown(void)
 int32_t initMidiFunc(void *ptr)
 {
 	initMidiIn();
+#ifdef __EMSCRIPTEN__
+#if defined(__EMSCRIPTEN_PTHREADS__)
+	while (ft2_midi_web_poll_status() == 0)
+		SDL_Delay(10);
+	if (ft2_midi_web_poll_status() < 0)
+		midiInDev = NULL;
+	else
+		midiInDev = (void *)1;
+#else
+	ft2_midi_web_init_or_refresh();
+	ft2_midi_web_sync_in_dev_pointer();
+#endif
+#endif
 	setMidiInputDeviceFromConfig();
 	openMidiInDevice(midi.inputDevice);
 	midi.rescanDevicesFlag = true;
@@ -515,6 +763,40 @@ int32_t initMidiFunc(void *ptr)
 	return true;
 	(void)ptr;
 }
+
+#ifdef __EMSCRIPTEN__
+void ft2_midi_tick_web_ports(void)
+{
+	if (!midi.initThreadDone)
+		return;
+
+	ft2_midi_web_init_or_refresh();
+	ft2_midi_web_sync_in_dev_pointer();
+
+	const int st = ft2_midi_web_poll_status();
+	uint32_t n = 0;
+
+	if (st > 0)
+	{
+		n = (uint32_t)EM_ASM_INT({
+			return Module.ft2MidiPorts ? Module.ft2MidiPorts.length : 0;
+		});
+	}
+
+	static uint32_t s_lastN = 0xFFFFFFFFu;
+	static int s_lastSt = 42;
+
+	if (n == s_lastN && st == s_lastSt)
+		return;
+
+	s_lastN = n;
+	s_lastSt = st;
+
+	rescanMidiInputDevices();
+	if (ui.configScreenShown && editor.currConfigScreen == CONFIG_SCREEN_MIDI_INPUT)
+		drawMidiInputList();
+}
+#endif
 
 #else
 typedef int prevent_compiler_warning; // kludge: prevent warning about empty .c file if HAS_MIDI is not defined

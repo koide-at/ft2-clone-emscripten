@@ -12,6 +12,9 @@
 #include "ft2_structs.h"
 #include "ft2_events.h"
 #include "ft2_smpfx.h"
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+#include "ft2_emscripten.h"
+#endif
 
 #define SYSTEM_REQUEST_H 67
 #define SYSTEM_REQUEST_Y 249
@@ -386,6 +389,9 @@ int16_t okBox(int16_t type, const char *headline, const char *text, void (*check
 
 		flipFrame();
 		endFPSCounter();
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+		ft2_ems_modal_yield();
+#endif
 	}
 
 	for (uint16_t i = 0; i < numButtons; i++)
@@ -653,6 +659,9 @@ int16_t inputBox(int16_t type, const char *headline, char *edText, uint16_t maxS
 
 		flipFrame();
 		endFPSCounter();
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+		ft2_ems_modal_yield();
+#endif
 	}
 
 	editor.editTextFlag = false;
@@ -680,6 +689,14 @@ int16_t okBoxThreadSafe(int16_t type, const char *headline, const char *text, vo
 {
 	if (!editor.mainLoopOngoing)
 		return 0; // main loop was not even started yet, bail out.
+
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	/* WebAssembly without pthreads: all SDL/UI code runs on the main thread.
+	   The defer+SDL_Delay loop below waits for handleThreadEvents() to call okBox(),
+	   which never happens if we're inside synchronous work dispatched from
+	   handleEvents() (e.g. Disk op. directory listing). Run the dialog inline. */
+	return okBox(type, headline, text, checkBoxCallback);
+#endif
 
 	// the amount of time to wait is not important, but close to one video frame makes sense
 	const uint32_t waitTime = (uint32_t)((1000.0 / VBLANK_HZ) + 0.5);

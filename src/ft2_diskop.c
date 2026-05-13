@@ -7,6 +7,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 #include <math.h>
 #ifdef _WIN32
 #define WIN32_MEAN_AND_LEAN
@@ -17,7 +18,9 @@
 #else
 #include <sys/types.h>
 #include <sys/stat.h>
+#ifndef __EMSCRIPTEN__
 #include <fts.h> // for fts_open() and stuff in recursiveDelete()
+#endif
 #include <unistd.h>
 #include <dirent.h>
 #include <errno.h>
@@ -40,6 +43,12 @@
 #include "ft2_video.h"
 #include "ft2_inst_ed.h"
 #include "ft2_structs.h"
+#ifdef __EMSCRIPTEN__
+#include "ft2_emscripten.h"
+#endif
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+#include "ft2_emscripten.h"
+#endif
 
 // hide POSIX warnings for chdir()
 #ifdef _MSC_VER
@@ -498,6 +507,43 @@ bool fileExistsAnsi(char *str)
 	return (retVal != -1);
 }
 
+#if defined(__EMSCRIPTEN__)
+static bool deleteDirRecursive(UNICHAR *strU)
+{
+	struct stat st;
+	DIR *d;
+	struct dirent *e;
+	char buf[PATH_MAX * 2];
+
+	if (stat(strU, &st) != 0)
+		return false;
+
+	if (S_ISDIR(st.st_mode))
+	{
+		d = opendir(strU);
+		if (d == NULL)
+			return false;
+
+		while ((e = readdir(d)) != NULL)
+		{
+			if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0)
+				continue;
+
+			snprintf(buf, sizeof buf, "%s/%s", strU, e->d_name);
+			if (!deleteDirRecursive((UNICHAR *)buf))
+			{
+				closedir(d);
+				return false;
+			}
+		}
+
+		closedir(d);
+		return rmdir(strU) == 0;
+	}
+
+	return remove(strU) == 0;
+}
+#else
 static bool deleteDirRecursive(UNICHAR *strU)
 {
 	FTSENT *curr;
@@ -543,6 +589,7 @@ static bool deleteDirRecursive(UNICHAR *strU)
 
 	return ret;
 }
+#endif
 
 static bool makeDirAnsi(char *str)
 {
@@ -1096,7 +1143,12 @@ static void fileListPressed(int32_t index)
 						if (!result)
 							okBox(0, "System message", "Couldn't delete folder: Access denied!", NULL);
 						else
+						{
 							editor.diskOpReadDir = true;
+#ifdef __EMSCRIPTEN__
+							ft2_ems_sync_fs_out();
+#endif
+						}
 					}
 					else
 					{
@@ -1104,7 +1156,12 @@ static void fileListPressed(int32_t index)
 						if (!result)
 							okBox(0, "System message", "Couldn't delete file: Access denied!", NULL);
 						else
+						{
 							editor.diskOpReadDir = true;
+#ifdef __EMSCRIPTEN__
+							ft2_ems_sync_fs_out();
+#endif
+						}
 					}
 				}
 			}
@@ -1145,6 +1202,9 @@ static void fileListPressed(int32_t index)
 					else
 					{
 						editor.diskOpReadDir = true;
+#ifdef __EMSCRIPTEN__
+						ft2_ems_sync_fs_out();
+#endif
 					}
 				}
 			}
@@ -1420,11 +1480,17 @@ static int8_t findFirst(DirRec *searchRec)
 
 #if defined(__sun) || defined(sun)
 	if (s.st_mode == S_IFLNK)
+#elif defined(__EMSCRIPTEN__)
+	if (fData->d_type == DT_UNKNOWN || fData->d_type == DT_LNK)
 #else
 	if (fData->d_type == DT_UNKNOWN || fData->d_type == DT_LNK)
 #endif
 	{
+#if defined(__EMSCRIPTEN__)
+		if (lstat(fData->d_name, &st) == 0)
+#else
 		if (stat(fData->d_name, &st) == 0)
+#endif
 		{
 			fSize = (int64_t)st.st_size;
 			searchRec->filesize = (fSize > INT32_MAX) ? -1 : (fSize & 0xFFFFFFFF);
@@ -1435,7 +1501,11 @@ static int8_t findFirst(DirRec *searchRec)
 	}
 	else if (!searchRec->isDir)
 	{
+#if defined(__EMSCRIPTEN__)
+		if (lstat(fData->d_name, &st) == 0)
+#else
 		if (stat(fData->d_name, &st) == 0)
+#endif
 		{
 			fSize = (int64_t)st.st_size;
 			searchRec->filesize = (fSize > INT32_MAX) ? -1 : (fSize & 0xFFFFFFFF);
@@ -1503,11 +1573,17 @@ static int8_t findNext(DirRec *searchRec)
 
 #if defined(__sun) || defined(sun)
 	if (s.st_mode == S_IFLNK)
+#elif defined(__EMSCRIPTEN__)
+	if (fData->d_type == DT_UNKNOWN || fData->d_type == DT_LNK)
 #else
 	if (fData->d_type == DT_UNKNOWN || fData->d_type == DT_LNK)
 #endif
 	{
+#if defined(__EMSCRIPTEN__)
+		if (lstat(fData->d_name, &st) == 0)
+#else
 		if (stat(fData->d_name, &st) == 0)
+#endif
 		{
 			fSize = (int64_t)st.st_size;
 			searchRec->filesize = (fSize > INT32_MAX) ? -1 : (fSize & 0xFFFFFFFF);
@@ -1518,7 +1594,11 @@ static int8_t findNext(DirRec *searchRec)
 	}
 	else if (!searchRec->isDir)
 	{
+#if defined(__EMSCRIPTEN__)
+		if (lstat(fData->d_name, &st) == 0)
+#else
 		if (stat(fData->d_name, &st) == 0)
+#endif
 		{
 			fSize = (int64_t)st.st_size;
 			searchRec->filesize = (fSize > INT32_MAX) ? -1 : (fSize & 0xFFFFFFFF);
@@ -1896,9 +1976,162 @@ static DirRec *bufferCreateEmptyDir(void) // special case: creates a dir entry w
 	return dirEntry;
 }
 
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+/* Readdir/sort on the main thread would freeze the browser tab; spread work across frames. */
+#define DISKOP_WEB_READDIR_CHUNK 400
+#define DISKOP_WEB_MAX_DIR_ENTRIES 16384
+static bool diskOpWebDirReadActive;
+static int8_t diskOpWebLastFindFlag;
+static DirRec diskOpWebTmp;
+static int32_t diskOpWebSafetyCounter;
+
+static void diskOp_WebFinalizeDirList(void)
+{
+	if (FReq_FileCount <= 0)
+	{
+		FReq_Buffer = bufferCreateEmptyDir();
+		if (FReq_Buffer != NULL)
+			FReq_FileCount = 1;
+		else
+			okBoxThreadSafe(0, "System message", "Not enough memory!", NULL);
+	}
+	/* else: keep readdir order — sortDirectory() can freeze the browser main thread. */
+
+	editor.diskOpReadDone = true;
+	setMouseBusy(false);
+}
+
+static void diskOp_WebCompleteDirRead(void)
+{
+	findClose();
+	diskOpWebDirReadActive = false;
+	diskOp_WebFinalizeDirList();
+}
+
+static void diskOp_WebBeginDirRead(void)
+{
+	diskOpWebSafetyCounter = 0;
+	diskOpWebDirReadActive = false;
+
+#ifdef FT2_WEB_DISKOP_DUMMY
+	findClose();
+	FReq_DirPos = 0;
+	freeDirRecBuffer();
+
+	if (FReq_CurPathU != NULL)
+		UNICHAR_GETCWD(FReq_CurPathU, PATH_MAX);
+
+	FReq_Buffer = bufferCreateEmptyDir();
+	if (FReq_Buffer == NULL)
+		okBoxThreadSafe(0, "System message", "Not enough memory!", NULL);
+	else
+		FReq_FileCount = 1;
+
+	editor.diskOpReadDone = true;
+	setMouseBusy(false);
+	return;
+#endif
+
+	FReq_DirPos = 0;
+	freeDirRecBuffer();
+
+	UNICHAR_GETCWD(FReq_CurPathU, PATH_MAX);
+
+	diskOpWebLastFindFlag = findFirst(&diskOpWebTmp);
+	if (diskOpWebLastFindFlag != LFF_DONE && diskOpWebLastFindFlag != LFF_SKIP)
+	{
+		FReq_Buffer = (DirRec *)malloc(sizeof (DirRec));
+		if (FReq_Buffer == NULL)
+		{
+			findClose();
+
+			okBoxThreadSafe(0, "System message", "Not enough memory!", NULL);
+
+			FReq_Buffer = bufferCreateEmptyDir();
+			if (FReq_Buffer != NULL)
+				FReq_FileCount = 1;
+			else
+				okBoxThreadSafe(0, "System message", "Not enough memory!", NULL);
+
+			editor.diskOpReadDone = true;
+			setMouseBusy(false);
+			return;
+		}
+
+		memcpy(FReq_Buffer, &diskOpWebTmp, sizeof (DirRec));
+		FReq_FileCount++;
+	}
+
+	if (diskOpWebLastFindFlag == LFF_DONE)
+	{
+		diskOp_WebCompleteDirRead();
+		return;
+	}
+
+	diskOpWebDirReadActive = true;
+}
+
+void diskOp_TickWebDirRead(void)
+{
+	if (!diskOpWebDirReadActive)
+		return;
+
+	int32_t steps = 0;
+	while (diskOpWebLastFindFlag != LFF_DONE && steps < DISKOP_WEB_READDIR_CHUNK)
+	{
+		if (FReq_FileCount >= DISKOP_WEB_MAX_DIR_ENTRIES)
+		{
+			findClose();
+			diskOpWebDirReadActive = false;
+			diskOp_WebFinalizeDirList();
+			return;
+		}
+
+		if (++diskOpWebSafetyCounter > 100000)
+		{
+			diskOp_WebCompleteDirRead();
+			return;
+		}
+
+		diskOpWebLastFindFlag = findNext(&diskOpWebTmp);
+		if (diskOpWebLastFindFlag != LFF_DONE && diskOpWebLastFindFlag != LFF_SKIP)
+		{
+			DirRec *newPtr = (DirRec *)realloc(FReq_Buffer, sizeof (DirRec) * (FReq_FileCount + 1));
+			if (newPtr == NULL)
+			{
+				freeDirRecBuffer();
+				okBoxThreadSafe(0, "System message", "Not enough memory!", NULL);
+				findClose();
+				diskOpWebDirReadActive = false;
+				editor.diskOpReadDone = true;
+				setMouseBusy(false);
+				return;
+			}
+
+			FReq_Buffer = newPtr;
+
+			memcpy(&FReq_Buffer[FReq_FileCount], &diskOpWebTmp, sizeof (DirRec));
+			FReq_FileCount++;
+		}
+
+		steps++;
+	}
+
+	if (diskOpWebLastFindFlag == LFF_DONE)
+		diskOp_WebCompleteDirRead();
+}
+#else
+void diskOp_TickWebDirRead(void)
+{
+}
+#endif
+
 static int32_t diskOp_ReadDirectoryThread(void *ptr)
 {
 	DirRec tmp;
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	int32_t safetyCounter = 0;
+#endif
 
 	FReq_DirPos = 0;
 
@@ -1935,6 +2168,11 @@ static int32_t diskOp_ReadDirectoryThread(void *ptr)
 	// read remaining files
 	while (lastFindFileFlag != LFF_DONE)
 	{
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+		/* Prevent hard hang if readdir() fails to terminate on web libc. */
+		if (++safetyCounter > 100000)
+			break;
+#endif
 		lastFindFileFlag = findNext(&tmp);
 		if (lastFindFileFlag != LFF_DONE && lastFindFileFlag != LFF_SKIP)
 		{
@@ -1982,6 +2220,11 @@ void diskOp_StartDirReadThread(void)
 	editor.diskOpReadDone = false;
 
 	mouseAnimOn();
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	/* Single-threaded web builds: list directory across frames (see diskOp_TickWebDirRead). */
+	diskOp_WebBeginDirRead();
+	return;
+#endif
 	thread = SDL_CreateThread(diskOp_ReadDirectoryThread, "file lister thread", NULL);
 	if (thread == NULL)
 	{
@@ -2259,6 +2502,9 @@ void showDiskOpScreen(void)
 			// nope, couldn't do that, set Disk Op. path to the user's desktop directory
 #ifdef _WIN32
 			SHGetFolderPathW(NULL, CSIDL_DESKTOPDIRECTORY, NULL, 0, FReq_ModCurPathU);
+#elif defined(__EMSCRIPTEN__)
+			/* Browser: MEMFS/IDBFS work dir from startup; ~/Desktop often does not exist. */
+			UNICHAR_STRCPY(FReq_ModCurPathU, "/ft2_persistent");
 #else
 			char *home = getenv("HOME");
 			if (home != NULL)
@@ -2292,6 +2538,11 @@ void showDiskOpScreen(void)
 		editor.diskOpReadOnOpen = false;
 		editor.diskOpReadDir = true;
 	}
+
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	/* Allow the browser to paint before returning from the nested pushbutton handler. */
+	ft2_ems_modal_yield();
+#endif
 }
 
 void hideDiskOpScreen(void)
@@ -2416,7 +2667,12 @@ void pbDiskOpMakeDir(void)
 		}
 
 		if (makeDirAnsi(FReq_NameTemp))
+		{
 			editor.diskOpReadDir = true;
+#ifdef __EMSCRIPTEN__
+			ft2_ems_sync_fs_out();
+#endif
+		}
 		else
 			okBox(0, "System message", "Couldn't create directory: Access denied, or a dir with the same name already exists!", NULL);
 	}

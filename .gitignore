@@ -1,5 +1,20 @@
+.emscripten_cache/
+build-emscripten*/
+__pycache__/
+*.pyc
+release/macos/ft2-clone-macos.app/Contents/Frameworks/
 
-vs2019_project/.vs/ft2-clone/v16/.suo
+# Emscripten link output + post-build copy (do not commit; build with ./make-web.sh)
+release/other/index.html
+release/other/index.js
+release/other/index.wasm
+release/other/ft2-clone.html
+release/other/ft2-clone.js
+release/other/ft2-clone.wasm
+release/other/ft2-web-toolbar-icon.png
+
+# Maintainer-only; not published (keep locally next to this tree)
+WEB_GITHUB_WORKFLOW.md
 vs2019_project/enc_temp_folder/*
 vs2019_project/ft2-clone/Release/ft2-clone.vcxproj.FileListAbsolute.txt
 vs2019_project/ft2-clone/x64/Debug/ft2-clone.vcxproj.FileListAbsolute.txt

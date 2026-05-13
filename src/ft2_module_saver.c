@@ -13,6 +13,9 @@
 #include "ft2_module_loader.h"
 #include "ft2_tables.h"
 #include "ft2_structs.h"
+#ifdef __EMSCRIPTEN__
+#include "ft2_emscripten.h"
+#endif
 
 static int8_t smpChunkBuf[1024];
 static uint8_t packedPattData[65536], modPattData[64*32*4];
@@ -659,6 +662,11 @@ static int32_t saveMusicThread(void *ptr)
 		saveMOD(editor.tmpFilenameU);
 
 	resumeAudio();
+#ifdef __EMSCRIPTEN__
+	if (editor.tmpFilenameU != NULL)
+		ft2_ems_offer_download_path((const char *)editor.tmpFilenameU);
+	ft2_ems_sync_fs_out();
+#endif
 	return true;
 
 	(void)ptr;
@@ -669,6 +677,11 @@ void saveMusic(UNICHAR *filenameU)
 	UNICHAR_STRCPY(editor.tmpFilenameU, filenameU);
 
 	mouseAnimOn();
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	saveMusicThread(NULL);
+	return;
+#endif
+
 	thread = SDL_CreateThread(saveMusicThread, "mod save thread", NULL);
 	if (thread == NULL)
 	{

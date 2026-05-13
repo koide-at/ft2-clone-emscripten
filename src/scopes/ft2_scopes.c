@@ -51,14 +51,18 @@ int32_t getSamplePositionFromScopes(uint8_t ch)
 void stopAllScopes(void)
 {
 	// wait for scopes to finish updating
+#if !(defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__))
 	while (scopesUpdatingFlag);
-	
+#endif
+
 	volatile scope_t *sc = scope;
 	for (int32_t i = 0; i < MAX_CHANNELS; i++, sc++)
 		sc->active = false;
 
 	// wait for scope displaying to be done (safety)
+#if !(defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__))
 	while (scopesDisplayingFlag);
+#endif
 }
 
 // toggle mute
@@ -542,8 +546,26 @@ static int32_t scopeThreadFunc(void *ptr)
 	return true;
 }
 
+void ft2_scopes_tick_singlethread_web(void)
+{
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	if (!editor.programRunning)
+		return;
+
+	editor.scopeThreadBusy = true;
+	updateScopes();
+	editor.scopeThreadBusy = false;
+#endif
+}
+
 bool initScopes(void)
 {
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	scopeThread = NULL;
+	hpc_SetDurationInHz(&scopeHpc, SCOPE_HZ);
+	hpc_ResetCounters(&scopeHpc);
+	return true;
+#else
 	scopeThread = SDL_CreateThread(scopeThreadFunc, "scope thread", NULL);
 	if (scopeThread == NULL)
 	{
@@ -553,4 +575,5 @@ bool initScopes(void)
 
 	SDL_DetachThread(scopeThread);
 	return true;
+#endif
 }

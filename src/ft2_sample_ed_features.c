@@ -25,6 +25,9 @@
 #include "ft2_keyboard.h"
 #include "ft2_tables.h"
 #include "ft2_structs.h"
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+#include "ft2_emscripten.h"
+#endif
 
 static volatile bool stopThread;
 static bool echo_AddMemory, exitFlag, outOfMemory;
@@ -171,6 +174,11 @@ static int32_t resampleThread(void *ptr)
 static void pbDoResampling(void)
 {
 	mouseAnimOn();
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	resampleThread(NULL);
+	return;
+#endif
+
 	thread = SDL_CreateThread(resampleThread, "resample thread", NULL);
 	if (thread == NULL)
 	{
@@ -333,6 +341,9 @@ void pbSampleResample(void)
 		drawScrollBar(0);
 
 		flipFrame();
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+		ft2_ems_modal_yield();
+#endif
 	}
 
 	for (i = 0; i < 4; i++) hidePushButton(i);
@@ -549,6 +560,11 @@ static void pbCreateEcho(void)
 	stopThread = false;
 
 	mouseAnimOn();
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	createEchoThread(NULL);
+	return;
+#endif
+
 	thread = SDL_CreateThread(createEchoThread, "echo thread", NULL);
 	if (thread == NULL)
 	{
@@ -787,6 +803,9 @@ void pbSampleEcho(void)
 		for (uint16_t i = 0; i < 3; i++) drawScrollBar(i);
 
 		flipFrame();
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+		ft2_ems_modal_yield();
+#endif
 	}
 
 	hideCheckBox(0);
@@ -936,6 +955,11 @@ static int32_t mixThread(void *ptr)
 static void pbMix(void)
 {
 	mouseAnimOn();
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	mixThread(NULL);
+	return;
+#endif
+
 	thread = SDL_CreateThread(mixThread, "sample mix thread", NULL);
 	if (thread == NULL)
 	{
@@ -1086,6 +1110,9 @@ void pbSampleMix(void)
 		drawScrollBar(0);
 
 		flipFrame();
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+		ft2_ems_modal_yield();
+#endif
 	}
 
 	for (i = 0; i < 4; i++) hidePushButton(i);
@@ -1262,6 +1289,11 @@ static void pbApplyVolume(void)
 	}
 
 	mouseAnimOn();
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	applyVolumeThread(NULL);
+	return;
+#endif
+
 	thread = SDL_CreateThread(applyVolumeThread, "sample modification thread", NULL);
 	if (thread == NULL)
 	{
@@ -1368,6 +1400,11 @@ getScaleExit:
 static void pbGetMaxScale(void)
 {
 	mouseAnimOn();
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	getMaxScaleThread(NULL);
+	return;
+#endif
+
 	thread = SDL_CreateThread(getMaxScaleThread, "sample modification thread", NULL);
 	if (thread == NULL)
 	{
@@ -1635,6 +1672,9 @@ void pbSampleVolume(void)
 		for (i = 0; i < 2; i++) drawScrollBar(i);
 
 		flipFrame();
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+		ft2_ems_modal_yield();
+#endif
 	}
 
 	for (i = 0; i < 7; i++) hidePushButton(i);

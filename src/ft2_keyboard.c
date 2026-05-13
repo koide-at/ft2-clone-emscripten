@@ -26,8 +26,25 @@
 #include "ft2_sample_ed_features.h"
 #include "ft2_midi.h"
 #include "ft2_structs.h"
+#ifdef __EMSCRIPTEN__
+#include <emscripten/emscripten.h>
+#endif
 
 keyb_t keyb; // globalized
+
+enum
+{
+	KEYMAP_MOD_CTRL = 1,
+	KEYMAP_MOD_ALT = 2,
+	KEYMAP_MOD_SHIFT = 4,
+	KEYMAP_MOD_CMD = 8
+};
+
+typedef struct keyBinding_t
+{
+	SDL_Keycode keycode;
+	uint8_t modsMask;
+} keyBinding_t;
 
 static const uint8_t scancodeKey2Note[52] = // keys (USB usage page standard) to FT2 notes look-up table
 {
@@ -42,6 +59,123 @@ static const uint8_t scancodeKey2Note[52] = // keys (USB usage page standard) to
 
 static void handleKeys(SDL_Keycode keycode, SDL_Scancode scanKey);
 static bool checkModifiedKeys(SDL_Keycode keycode);
+static uint8_t getPressedModsMask(void);
+static bool keymapComboPressed(const keyBinding_t *kb, SDL_Keycode keycode, uint8_t modsMask);
+static bool executeRemappableAction(int32_t action);
+static bool handleRemappableModifiedShortcut(SDL_Keycode keycode);
+static bool isLegacyRemappableCombo(SDL_Keycode keycode, uint8_t modsMask);
+static void closeToPatternEditorLayout(void);
+static void jumpToStoredPatternRow(uint8_t jumpPosSlot);
+
+static const keyBinding_t defaultBindings[KEYMAP_ACTION_COUNT] =
+{
+	{ SDLK_a, KEYMAP_MOD_CTRL },         // KEYMAP_ACTION_SHOW_ADV_EDIT
+	{ SDLK_b, KEYMAP_MOD_CTRL },         // KEYMAP_ACTION_SHOW_ABOUT
+	{ SDLK_c, KEYMAP_MOD_CTRL },         // KEYMAP_ACTION_SHOW_CONFIG
+	{ SDLK_d, KEYMAP_MOD_CTRL },         // KEYMAP_ACTION_SHOW_DISK_OP
+	{ SDLK_h, KEYMAP_MOD_CTRL },         // KEYMAP_ACTION_SHOW_HELP
+	{ SDLK_i, KEYMAP_MOD_CTRL },         // KEYMAP_ACTION_SHOW_INST_EDITOR
+	{ SDLK_m, KEYMAP_MOD_CTRL },         // KEYMAP_ACTION_SHOW_INST_EDITOR_EXT
+	{ SDLK_n, KEYMAP_MOD_CTRL },         // KEYMAP_ACTION_SHOW_NIBBLES
+	{ SDLK_p, KEYMAP_MOD_CTRL },         // KEYMAP_ACTION_SHOW_PATTERN_EDITOR
+	{ SDLK_e, KEYMAP_MOD_CTRL },         // KEYMAP_ACTION_SHOW_SAMPLE_EDITOR_EXT
+	{ SDLK_t, KEYMAP_MOD_CTRL },         // KEYMAP_ACTION_SHOW_TRANSPOSE
+	{ SDLK_1, KEYMAP_MOD_CTRL },         // KEYMAP_ACTION_CONFIG_AUDIO_TAB
+	{ SDLK_2, KEYMAP_MOD_CTRL },         // KEYMAP_ACTION_CONFIG_LAYOUT_TAB
+	{ SDLK_3, KEYMAP_MOD_CTRL },         // KEYMAP_ACTION_CONFIG_MISC_TAB
+	{ SDLK_4, KEYMAP_MOD_CTRL },         // KEYMAP_ACTION_CONFIG_MIDI_TAB
+	{ SDLK_r, KEYMAP_MOD_CTRL },         // KEYMAP_ACTION_SHOW_TRIM
+	{ SDLK_s, KEYMAP_MOD_CTRL },         // KEYMAP_ACTION_SHOW_SAMPLE_EDITOR
+	{ SDLK_z, KEYMAP_MOD_CTRL },         // KEYMAP_ACTION_TOGGLE_EXT_PATTERN
+	{ SDLK_x, KEYMAP_MOD_CTRL },         // KEYMAP_ACTION_CLOSE_TO_PATTERN
+	{ SDLK_RETURN, KEYMAP_MOD_ALT },     // KEYMAP_ACTION_TOGGLE_FULLSCREEN
+	{ SDLK_F9, KEYMAP_MOD_CTRL },        // KEYMAP_ACTION_PLAY_FROM_JUMP_1
+	{ SDLK_F10, KEYMAP_MOD_CTRL },       // KEYMAP_ACTION_PLAY_FROM_JUMP_2
+	{ SDLK_F11, KEYMAP_MOD_CTRL },       // KEYMAP_ACTION_PLAY_FROM_JUMP_3
+	{ SDLK_F12, KEYMAP_MOD_CTRL },       // KEYMAP_ACTION_PLAY_FROM_JUMP_4
+	{ SDLK_F9, KEYMAP_MOD_SHIFT },       // KEYMAP_ACTION_SET_JUMP_1
+	{ SDLK_F10, KEYMAP_MOD_SHIFT },      // KEYMAP_ACTION_SET_JUMP_2
+	{ SDLK_F11, KEYMAP_MOD_SHIFT },      // KEYMAP_ACTION_SET_JUMP_3
+	{ SDLK_F12, KEYMAP_MOD_SHIFT },      // KEYMAP_ACTION_SET_JUMP_4
+	{ SDLK_q, KEYMAP_MOD_ALT },          // KEYMAP_ACTION_JUMP_CH_0
+	{ SDLK_w, KEYMAP_MOD_ALT },          // KEYMAP_ACTION_JUMP_CH_1
+	{ SDLK_e, KEYMAP_MOD_ALT },          // KEYMAP_ACTION_JUMP_CH_2
+	{ SDLK_r, KEYMAP_MOD_ALT },          // KEYMAP_ACTION_JUMP_CH_3
+	{ SDLK_t, KEYMAP_MOD_ALT },          // KEYMAP_ACTION_JUMP_CH_4
+	{ SDLK_y, KEYMAP_MOD_ALT },          // KEYMAP_ACTION_JUMP_CH_5
+	{ SDLK_u, KEYMAP_MOD_ALT },          // KEYMAP_ACTION_JUMP_CH_6
+	{ SDLK_i, KEYMAP_MOD_ALT },          // KEYMAP_ACTION_JUMP_CH_7
+	{ SDLK_a, KEYMAP_MOD_ALT },          // KEYMAP_ACTION_JUMP_CH_8
+	{ SDLK_s, KEYMAP_MOD_ALT },          // KEYMAP_ACTION_JUMP_CH_9
+	{ SDLK_d, KEYMAP_MOD_ALT },          // KEYMAP_ACTION_JUMP_CH_10
+	{ SDLK_f, KEYMAP_MOD_ALT },          // KEYMAP_ACTION_JUMP_CH_11
+	{ SDLK_g, KEYMAP_MOD_ALT },          // KEYMAP_ACTION_JUMP_CH_12
+	{ SDLK_h, KEYMAP_MOD_ALT },          // KEYMAP_ACTION_JUMP_CH_13
+	{ SDLK_j, KEYMAP_MOD_ALT },          // KEYMAP_ACTION_JUMP_CH_14
+	{ SDLK_k, KEYMAP_MOD_ALT },          // KEYMAP_ACTION_JUMP_CH_15
+	{ SDLK_c, KEYMAP_MOD_ALT },          // KEYMAP_ACTION_ALT_C_CONTEXT
+	{ SDLK_v, KEYMAP_MOD_ALT },          // KEYMAP_ACTION_ALT_V_CONTEXT
+	{ SDLK_x, KEYMAP_MOD_ALT },          // KEYMAP_ACTION_ALT_X_SAMPLE_CUT
+	{ SDLK_z, KEYMAP_MOD_ALT },          // KEYMAP_ACTION_ALT_Z_SAMPLE_ZOOM_OUT
+	{ SDLK_v, KEYMAP_MOD_CTRL },         // KEYMAP_ACTION_CTRL_V_CONTEXT
+	{ SDLK_v, KEYMAP_MOD_SHIFT },        // KEYMAP_ACTION_SHIFT_V_TRACK_VOL
+	{ SDLK_1, KEYMAP_MOD_ALT },          // KEYMAP_ACTION_MACRO_READ_1
+	{ SDLK_2, KEYMAP_MOD_ALT },          // KEYMAP_ACTION_MACRO_READ_2
+	{ SDLK_3, KEYMAP_MOD_ALT },          // KEYMAP_ACTION_MACRO_READ_3
+	{ SDLK_4, KEYMAP_MOD_ALT },          // KEYMAP_ACTION_MACRO_READ_4
+	{ SDLK_5, KEYMAP_MOD_ALT },          // KEYMAP_ACTION_MACRO_READ_5
+	{ SDLK_6, KEYMAP_MOD_ALT },          // KEYMAP_ACTION_MACRO_READ_6
+	{ SDLK_7, KEYMAP_MOD_ALT },          // KEYMAP_ACTION_MACRO_READ_7
+	{ SDLK_8, KEYMAP_MOD_ALT },          // KEYMAP_ACTION_MACRO_READ_8
+	{ SDLK_9, KEYMAP_MOD_ALT },          // KEYMAP_ACTION_MACRO_READ_9
+	{ SDLK_0, KEYMAP_MOD_ALT },          // KEYMAP_ACTION_MACRO_READ_10
+	{ SDLK_1, KEYMAP_MOD_ALT|KEYMAP_MOD_SHIFT }, // KEYMAP_ACTION_MACRO_WRITE_1
+	{ SDLK_2, KEYMAP_MOD_ALT|KEYMAP_MOD_SHIFT }, // KEYMAP_ACTION_MACRO_WRITE_2
+	{ SDLK_3, KEYMAP_MOD_ALT|KEYMAP_MOD_SHIFT }, // KEYMAP_ACTION_MACRO_WRITE_3
+	{ SDLK_4, KEYMAP_MOD_ALT|KEYMAP_MOD_SHIFT }, // KEYMAP_ACTION_MACRO_WRITE_4
+	{ SDLK_5, KEYMAP_MOD_ALT|KEYMAP_MOD_SHIFT }, // KEYMAP_ACTION_MACRO_WRITE_5
+	{ SDLK_6, KEYMAP_MOD_ALT|KEYMAP_MOD_SHIFT }, // KEYMAP_ACTION_MACRO_WRITE_6
+	{ SDLK_7, KEYMAP_MOD_ALT|KEYMAP_MOD_SHIFT }, // KEYMAP_ACTION_MACRO_WRITE_7
+	{ SDLK_8, KEYMAP_MOD_ALT|KEYMAP_MOD_SHIFT }, // KEYMAP_ACTION_MACRO_WRITE_8
+	{ SDLK_9, KEYMAP_MOD_ALT|KEYMAP_MOD_SHIFT }, // KEYMAP_ACTION_MACRO_WRITE_9
+	{ SDLK_0, KEYMAP_MOD_ALT|KEYMAP_MOD_SHIFT }, // KEYMAP_ACTION_MACRO_WRITE_10
+	{ SDLK_F1, KEYMAP_MOD_SHIFT },        // KEYMAP_ACTION_TRANSP_ALL_TRACK_DN
+	{ SDLK_F1, KEYMAP_MOD_CTRL },         // KEYMAP_ACTION_TRANSP_ALL_PATT_DN
+	{ SDLK_F1, KEYMAP_MOD_ALT },          // KEYMAP_ACTION_TRANSP_ALL_BLOCK_DN
+	{ SDLK_F2, KEYMAP_MOD_SHIFT },        // KEYMAP_ACTION_TRANSP_ALL_TRACK_UP
+	{ SDLK_F2, KEYMAP_MOD_CTRL },         // KEYMAP_ACTION_TRANSP_ALL_PATT_UP
+	{ SDLK_F2, KEYMAP_MOD_ALT },          // KEYMAP_ACTION_TRANSP_ALL_BLOCK_UP
+	{ SDLK_F7, KEYMAP_MOD_SHIFT },        // KEYMAP_ACTION_TRANSP_CUR_TRACK_DN
+	{ SDLK_F7, KEYMAP_MOD_CTRL },         // KEYMAP_ACTION_TRANSP_CUR_PATT_DN
+	{ SDLK_F7, KEYMAP_MOD_ALT },          // KEYMAP_ACTION_TRANSP_CUR_BLOCK_DN
+	{ SDLK_F8, KEYMAP_MOD_SHIFT },        // KEYMAP_ACTION_TRANSP_CUR_TRACK_UP
+	{ SDLK_F8, KEYMAP_MOD_CTRL },         // KEYMAP_ACTION_TRANSP_CUR_PATT_UP
+	{ SDLK_F8, KEYMAP_MOD_ALT },          // KEYMAP_ACTION_TRANSP_CUR_BLOCK_UP
+	{ SDLK_F1, 0 },                       // KEYMAP_ACTION_OCTAVE_0
+	{ SDLK_F2, 0 },                       // KEYMAP_ACTION_OCTAVE_1
+	{ SDLK_F3, 0 },                       // KEYMAP_ACTION_OCTAVE_2
+	{ SDLK_F4, 0 },                       // KEYMAP_ACTION_OCTAVE_3
+	{ SDLK_F5, 0 },                       // KEYMAP_ACTION_OCTAVE_4
+	{ SDLK_F6, 0 },                       // KEYMAP_ACTION_OCTAVE_5
+	{ SDLK_F7, 0 },                       // KEYMAP_ACTION_OCTAVE_6_F7
+	{ SDLK_F8, 0 },                       // KEYMAP_ACTION_OCTAVE_6_F8
+	{ SDLK_F9, 0 },                       // KEYMAP_ACTION_JUMP_TO_POS_1
+	{ SDLK_F10, 0 },                      // KEYMAP_ACTION_JUMP_TO_POS_2
+	{ SDLK_F11, 0 },                      // KEYMAP_ACTION_JUMP_TO_POS_3
+	{ SDLK_F12, 0 },                      // KEYMAP_ACTION_JUMP_TO_POS_4
+	{ SDLK_F3, KEYMAP_MOD_SHIFT },        // KEYMAP_ACTION_CUT_TRACK
+	{ SDLK_F3, KEYMAP_MOD_CTRL },         // KEYMAP_ACTION_CUT_PATTERN
+	{ SDLK_F3, KEYMAP_MOD_ALT },          // KEYMAP_ACTION_CUT_BLOCK
+	{ SDLK_F4, KEYMAP_MOD_SHIFT },        // KEYMAP_ACTION_COPY_TRACK
+	{ SDLK_F4, KEYMAP_MOD_CTRL },         // KEYMAP_ACTION_COPY_PATTERN
+	{ SDLK_F4, KEYMAP_MOD_ALT },          // KEYMAP_ACTION_COPY_BLOCK
+	{ SDLK_F5, KEYMAP_MOD_SHIFT },        // KEYMAP_ACTION_PASTE_TRACK
+	{ SDLK_F5, KEYMAP_MOD_CTRL },         // KEYMAP_ACTION_PASTE_PATTERN
+	{ SDLK_F5, KEYMAP_MOD_ALT }           // KEYMAP_ACTION_PASTE_BLOCK
+};
+
+static keyBinding_t bindings[KEYMAP_ACTION_COUNT];
+static bool keymapInited;
 
 int8_t scancodeKeyToNote(SDL_Scancode scancode)
 {
@@ -104,6 +238,12 @@ void keyUpHandler(SDL_Scancode scancode, SDL_Keycode keycode)
 
 void keyDownHandler(SDL_Scancode scancode, SDL_Keycode keycode, bool keyWasRepeated)
 {
+	if (!keymapInited)
+	{
+		keymapResetDefaults();
+		keymapInited = true;
+	}
+
 	if (keycode == SDLK_UNKNOWN)
 		return;
 
@@ -160,7 +300,7 @@ void keyDownHandler(SDL_Scancode scancode, SDL_Keycode keycode, bool keyWasRepea
 	if (handleEditKeys(keycode, scancode))
 		return;
 
-	if (keyb.keyModifierDown && checkModifiedKeys(keycode))
+	if (checkModifiedKeys(keycode))
 		return;
 
 	handleKeys(keycode, scancode); // no pattern editing, do general key handling
@@ -697,6 +837,13 @@ static void handleKeys(SDL_Keycode keycode, SDL_Scancode scanKey)
 
 static bool checkModifiedKeys(SDL_Keycode keycode)
 {
+	const uint8_t modsMask = getPressedModsMask();
+	if (handleRemappableModifiedShortcut(keycode))
+		return true;
+	// suppress legacy hardcoded shortcuts once keymap layer is active
+	if (isLegacyRemappableCombo(keycode, modsMask))
+		return true;
+
 	// normal keys
 	switch (keycode)
 	{
@@ -1432,3 +1579,344 @@ static bool checkModifiedKeys(SDL_Keycode keycode)
 
 	return false;
 }
+
+static uint8_t getPressedModsMask(void)
+{
+	uint8_t m = 0;
+	if (keyb.leftCtrlPressed) m |= KEYMAP_MOD_CTRL;
+	if (keyb.leftAltPressed) m |= KEYMAP_MOD_ALT;
+	if (keyb.leftShiftPressed) m |= KEYMAP_MOD_SHIFT;
+#ifdef __APPLE__
+	if (keyb.leftCommandPressed) m |= KEYMAP_MOD_CMD;
+#endif
+	return m;
+}
+
+static bool keymapComboPressed(const keyBinding_t *kb, SDL_Keycode keycode, uint8_t modsMask)
+{
+	return (kb->keycode == keycode) && (kb->modsMask == modsMask);
+}
+
+static void closeToPatternEditorLayout(void)
+{
+	if (ui.extendedPatternEditor)
+		exitPatternEditorExtended();
+
+	if (ui.sampleEditorShown)    hideSampleEditor();
+	if (ui.sampleEditorExtShown) hideSampleEditorExt();
+	if (ui.instEditorShown)      hideInstEditor();
+	if (ui.instEditorExtShown)   hideInstEditorExt();
+	if (ui.transposeShown)       hideTranspose();
+	if (ui.aboutScreenShown)     hideAboutScreen();
+	if (ui.configScreenShown)    hideConfigScreen();
+	if (ui.helpScreenShown)      hideHelpScreen();
+	if (ui.nibblesShown)         hideNibblesScreen();
+	if (ui.diskOpShown)          hideDiskOpScreen();
+	if (ui.advEditShown)         hideAdvEdit();
+	if (ui.wavRendererShown)     hideWavRenderer();
+	if (ui.trimScreenShown)      hideTrimScreen();
+
+	showTopScreen(false);
+	showBottomScreen();
+	showPatternEditor();
+}
+
+static void jumpToStoredPatternRow(uint8_t jumpPosSlot)
+{
+	lockAudio();
+
+	song.row = editor.ptnJumpPos[jumpPosSlot];
+	if (song.row >= song.currNumRows)
+		song.row = song.currNumRows - 1;
+
+	if (!songPlaying)
+	{
+		editor.row = (uint8_t)song.row;
+		ui.updatePatternEditor = true;
+	}
+
+	unlockAudio();
+}
+
+static bool executeRemappableAction(int32_t action)
+{
+	switch (action)
+	{
+		case KEYMAP_ACTION_SHOW_ADV_EDIT:        showAdvEdit(); return true;
+		case KEYMAP_ACTION_SHOW_ABOUT:
+		{
+			if (!ui.aboutScreenShown)
+				showAboutScreen();
+			return true;
+		}
+		case KEYMAP_ACTION_SHOW_CONFIG:          showConfigScreen(); return true;
+		case KEYMAP_ACTION_SHOW_DISK_OP:         if (!ui.diskOpShown) showDiskOpScreen(); return true;
+		case KEYMAP_ACTION_SHOW_HELP:            showHelpScreen(); return true;
+		case KEYMAP_ACTION_SHOW_INST_EDITOR:     showInstEditor(); return true;
+		case KEYMAP_ACTION_SHOW_INST_EDITOR_EXT:
+		{
+			if (ui.aboutScreenShown)  hideAboutScreen();
+			if (ui.configScreenShown) hideConfigScreen();
+			if (ui.helpScreenShown)   hideHelpScreen();
+			if (ui.nibblesShown)      hideNibblesScreen();
+			showInstEditorExt();
+			return true;
+		}
+		case KEYMAP_ACTION_SHOW_NIBBLES:         showNibblesScreen(); return true;
+		case KEYMAP_ACTION_SHOW_SAMPLE_EDITOR_EXT:
+		{
+			if (ui.aboutScreenShown)  hideAboutScreen();
+			if (ui.configScreenShown) hideConfigScreen();
+			if (ui.helpScreenShown)   hideHelpScreen();
+			if (ui.nibblesShown)      hideNibblesScreen();
+			showSampleEditorExt();
+			return true;
+		}
+		case KEYMAP_ACTION_SHOW_TRANSPOSE:       showTranspose(); return true;
+		case KEYMAP_ACTION_CONFIG_AUDIO_TAB:
+		{
+			editor.currConfigScreen = 0;
+			showConfigScreen();
+			checkRadioButton(RB_CONFIG_AUDIO);
+			return true;
+		}
+		case KEYMAP_ACTION_CONFIG_LAYOUT_TAB:
+		{
+			editor.currConfigScreen = 1;
+			showConfigScreen();
+			checkRadioButton(RB_CONFIG_LAYOUT);
+			return true;
+		}
+		case KEYMAP_ACTION_CONFIG_MISC_TAB:
+		{
+			editor.currConfigScreen = 2;
+			showConfigScreen();
+			checkRadioButton(RB_CONFIG_MISCELLANEOUS);
+			return true;
+		}
+		case KEYMAP_ACTION_CONFIG_MIDI_TAB:
+		{
+#ifdef HAS_MIDI
+			editor.currConfigScreen = 3;
+			showConfigScreen();
+			checkRadioButton(RB_CONFIG_MIDI_INPUT);
+#endif
+			return true;
+		}
+		case KEYMAP_ACTION_SHOW_TRIM:            showTrimScreen(); return true;
+		case KEYMAP_ACTION_SHOW_SAMPLE_EDITOR:   showSampleEditor(); return true;
+		case KEYMAP_ACTION_TOGGLE_EXT_PATTERN:   togglePatternEditorExtended(); return true;
+		case KEYMAP_ACTION_CLOSE_TO_PATTERN:     closeToPatternEditorLayout(); return true;
+		case KEYMAP_ACTION_TOGGLE_FULLSCREEN:    toggleFullscreen(); return true;
+		case KEYMAP_ACTION_PLAY_FROM_JUMP_1:     startPlaying(PLAYMODE_PATT, editor.ptnJumpPos[0]); return true;
+		case KEYMAP_ACTION_PLAY_FROM_JUMP_2:     startPlaying(PLAYMODE_PATT, editor.ptnJumpPos[1]); return true;
+		case KEYMAP_ACTION_PLAY_FROM_JUMP_3:     startPlaying(PLAYMODE_PATT, editor.ptnJumpPos[2]); return true;
+		case KEYMAP_ACTION_PLAY_FROM_JUMP_4:     startPlaying(PLAYMODE_PATT, editor.ptnJumpPos[3]); return true;
+		case KEYMAP_ACTION_SET_JUMP_1:           editor.ptnJumpPos[0] = (uint8_t)editor.row; return true;
+		case KEYMAP_ACTION_SET_JUMP_2:           editor.ptnJumpPos[1] = (uint8_t)editor.row; return true;
+		case KEYMAP_ACTION_SET_JUMP_3:           editor.ptnJumpPos[2] = (uint8_t)editor.row; return true;
+		case KEYMAP_ACTION_SET_JUMP_4:           editor.ptnJumpPos[3] = (uint8_t)editor.row; return true;
+		case KEYMAP_ACTION_JUMP_CH_0:            jumpToChannel(0); return true;
+		case KEYMAP_ACTION_JUMP_CH_1:            jumpToChannel(1); return true;
+		case KEYMAP_ACTION_JUMP_CH_2:            jumpToChannel(2); return true;
+		case KEYMAP_ACTION_JUMP_CH_3:            jumpToChannel(3); return true;
+		case KEYMAP_ACTION_JUMP_CH_4:            jumpToChannel(4); return true;
+		case KEYMAP_ACTION_JUMP_CH_5:            jumpToChannel(5); return true;
+		case KEYMAP_ACTION_JUMP_CH_6:            jumpToChannel(6); return true;
+		case KEYMAP_ACTION_JUMP_CH_7:            jumpToChannel(7); return true;
+		case KEYMAP_ACTION_JUMP_CH_8:            jumpToChannel(8); return true;
+		case KEYMAP_ACTION_JUMP_CH_9:            jumpToChannel(9); return true;
+		case KEYMAP_ACTION_JUMP_CH_10:           jumpToChannel(10); return true;
+		case KEYMAP_ACTION_JUMP_CH_11:           jumpToChannel(11); return true;
+		case KEYMAP_ACTION_JUMP_CH_12:           jumpToChannel(12); return true;
+		case KEYMAP_ACTION_JUMP_CH_13:           jumpToChannel(13); return true;
+		case KEYMAP_ACTION_JUMP_CH_14:           jumpToChannel(14); return true;
+		case KEYMAP_ACTION_JUMP_CH_15:           jumpToChannel(15); return true;
+		case KEYMAP_ACTION_ALT_C_CONTEXT:
+		{
+			if (ui.sampleEditorShown)
+			{
+				sampCopy();
+			}
+			else
+			{
+				// mark current track (non-FT2 feature)
+				pattMark.markX1 = cursor.ch;
+				pattMark.markX2 = pattMark.markX1;
+				pattMark.markY1 = 0;
+				pattMark.markY2 = patternNumRows[editor.editPattern];
+				ui.updatePatternEditor = true;
+			}
+			return true;
+		}
+		case KEYMAP_ACTION_ALT_V_CONTEXT:
+		{
+			if (ui.sampleEditorShown)
+				sampPaste();
+			else if (!ui.instEditorShown)
+				scaleFadeVolumeBlock();
+			return true;
+		}
+		case KEYMAP_ACTION_ALT_X_SAMPLE_CUT:
+		{
+			if (ui.sampleEditorShown)
+				sampCut();
+			return true;
+		}
+		case KEYMAP_ACTION_ALT_Z_SAMPLE_ZOOM_OUT:
+		{
+			if (ui.sampleEditorShown)
+				zoomOut();
+			return true;
+		}
+		case KEYMAP_ACTION_CTRL_V_CONTEXT:
+		{
+			if (ui.sampleEditorShown)
+				sampPaste();
+			else if (!ui.instEditorShown)
+				scaleFadeVolumePattern();
+			return true;
+		}
+		case KEYMAP_ACTION_SHIFT_V_TRACK_VOL:
+		{
+			if (!ui.sampleEditorShown && !ui.instEditorShown)
+			{
+				keyb.ignoreTextEditKey = true; // ignore key from first frame
+				scaleFadeVolumeTrack();
+			}
+			return true;
+		}
+		case KEYMAP_ACTION_MACRO_READ_1:          writeFromMacroSlot(0); return true;
+		case KEYMAP_ACTION_MACRO_READ_2:          writeFromMacroSlot(1); return true;
+		case KEYMAP_ACTION_MACRO_READ_3:          writeFromMacroSlot(2); return true;
+		case KEYMAP_ACTION_MACRO_READ_4:          writeFromMacroSlot(3); return true;
+		case KEYMAP_ACTION_MACRO_READ_5:          writeFromMacroSlot(4); return true;
+		case KEYMAP_ACTION_MACRO_READ_6:          writeFromMacroSlot(5); return true;
+		case KEYMAP_ACTION_MACRO_READ_7:          writeFromMacroSlot(6); return true;
+		case KEYMAP_ACTION_MACRO_READ_8:          writeFromMacroSlot(7); return true;
+		case KEYMAP_ACTION_MACRO_READ_9:          writeFromMacroSlot(8); return true;
+		case KEYMAP_ACTION_MACRO_READ_10:         writeFromMacroSlot(9); return true;
+		case KEYMAP_ACTION_MACRO_WRITE_1:         writeToMacroSlot(0); return true;
+		case KEYMAP_ACTION_MACRO_WRITE_2:         writeToMacroSlot(1); return true;
+		case KEYMAP_ACTION_MACRO_WRITE_3:         writeToMacroSlot(2); return true;
+		case KEYMAP_ACTION_MACRO_WRITE_4:         writeToMacroSlot(3); return true;
+		case KEYMAP_ACTION_MACRO_WRITE_5:         writeToMacroSlot(4); return true;
+		case KEYMAP_ACTION_MACRO_WRITE_6:         writeToMacroSlot(5); return true;
+		case KEYMAP_ACTION_MACRO_WRITE_7:         writeToMacroSlot(6); return true;
+		case KEYMAP_ACTION_MACRO_WRITE_8:         writeToMacroSlot(7); return true;
+		case KEYMAP_ACTION_MACRO_WRITE_9:         writeToMacroSlot(8); return true;
+		case KEYMAP_ACTION_MACRO_WRITE_10:        writeToMacroSlot(9); return true;
+		case KEYMAP_ACTION_TRANSP_ALL_TRACK_DN:   trackTranspAllInsDn(); return true;
+		case KEYMAP_ACTION_TRANSP_ALL_PATT_DN:    pattTranspAllInsDn(); return true;
+		case KEYMAP_ACTION_TRANSP_ALL_BLOCK_DN:   blockTranspAllInsDn(); return true;
+		case KEYMAP_ACTION_TRANSP_ALL_TRACK_UP:   trackTranspAllInsUp(); return true;
+		case KEYMAP_ACTION_TRANSP_ALL_PATT_UP:    pattTranspAllInsUp(); return true;
+		case KEYMAP_ACTION_TRANSP_ALL_BLOCK_UP:   blockTranspAllInsUp(); return true;
+		case KEYMAP_ACTION_TRANSP_CUR_TRACK_DN:   trackTranspCurInsDn(); return true;
+		case KEYMAP_ACTION_TRANSP_CUR_PATT_DN:    pattTranspCurInsDn(); return true;
+		case KEYMAP_ACTION_TRANSP_CUR_BLOCK_DN:   blockTranspCurInsDn(); return true;
+		case KEYMAP_ACTION_TRANSP_CUR_TRACK_UP:   trackTranspCurInsUp(); return true;
+		case KEYMAP_ACTION_TRANSP_CUR_PATT_UP:    pattTranspCurInsUp(); return true;
+		case KEYMAP_ACTION_TRANSP_CUR_BLOCK_UP:   blockTranspCurInsUp(); return true;
+		case KEYMAP_ACTION_OCTAVE_0:              editor.curOctave = 0; return true;
+		case KEYMAP_ACTION_OCTAVE_1:              editor.curOctave = 1; return true;
+		case KEYMAP_ACTION_OCTAVE_2:              editor.curOctave = 2; return true;
+		case KEYMAP_ACTION_OCTAVE_3:              editor.curOctave = 3; return true;
+		case KEYMAP_ACTION_OCTAVE_4:              editor.curOctave = 4; return true;
+		case KEYMAP_ACTION_OCTAVE_5:              editor.curOctave = 5; return true;
+		case KEYMAP_ACTION_OCTAVE_6_F7:           editor.curOctave = 6; return true;
+		case KEYMAP_ACTION_OCTAVE_6_F8:           editor.curOctave = 6; return true;
+		case KEYMAP_ACTION_JUMP_TO_POS_1:         jumpToStoredPatternRow(0); return true;
+		case KEYMAP_ACTION_JUMP_TO_POS_2:         jumpToStoredPatternRow(1); return true;
+		case KEYMAP_ACTION_JUMP_TO_POS_3:         jumpToStoredPatternRow(2); return true;
+		case KEYMAP_ACTION_JUMP_TO_POS_4:         jumpToStoredPatternRow(3); return true;
+		case KEYMAP_ACTION_CUT_TRACK:             cutTrack(); return true;
+		case KEYMAP_ACTION_CUT_PATTERN:           cutPattern(); return true;
+		case KEYMAP_ACTION_CUT_BLOCK:             cutBlock(); return true;
+		case KEYMAP_ACTION_COPY_TRACK:            copyTrack(); return true;
+		case KEYMAP_ACTION_COPY_PATTERN:          copyPattern(); return true;
+		case KEYMAP_ACTION_COPY_BLOCK:            copyBlock(); return true;
+		case KEYMAP_ACTION_PASTE_TRACK:           pasteTrack(); return true;
+		case KEYMAP_ACTION_PASTE_PATTERN:         pastePattern(); return true;
+		case KEYMAP_ACTION_PASTE_BLOCK:           pasteBlock(); return true;
+		case KEYMAP_ACTION_SHOW_PATTERN_EDITOR:
+		{
+			if (!ui.patternEditorShown)
+			{
+				if (ui.sampleEditorShown)    hideSampleEditor();
+				if (ui.sampleEditorExtShown) hideSampleEditorExt();
+				if (ui.instEditorShown)      hideInstEditor();
+				showPatternEditor();
+			}
+			return true;
+		}
+
+		default: return false;
+	}
+}
+
+static bool handleRemappableModifiedShortcut(SDL_Keycode keycode)
+{
+	const uint8_t modsMask = getPressedModsMask();
+	for (int32_t i = 0; i < KEYMAP_ACTION_COUNT; i++)
+	{
+		if (keymapComboPressed(&bindings[i], keycode, modsMask))
+			return executeRemappableAction(i);
+	}
+	return false;
+}
+
+static bool isLegacyRemappableCombo(SDL_Keycode keycode, uint8_t modsMask)
+{
+	for (int32_t i = 0; i < KEYMAP_ACTION_COUNT; i++)
+	{
+		if (keymapComboPressed(&defaultBindings[i], keycode, modsMask))
+			return true;
+	}
+	return false;
+}
+
+void keymapResetDefaults(void)
+{
+	memcpy(bindings, defaultBindings, sizeof (bindings));
+	keymapInited = true;
+}
+
+int32_t keymapGetBindingPacked(int32_t action)
+{
+	if (action < 0 || action >= KEYMAP_ACTION_COUNT)
+		return 0;
+
+	/* low 8 bits: mods, upper 24 bits: SDL_Keycode */
+	return ((int32_t)bindings[action].keycode << 8) | (bindings[action].modsMask & 0xFF);
+}
+
+bool keymapSetBinding(int32_t action, SDL_Keycode keycode, uint8_t modsMask)
+{
+	if (action < 0 || action >= KEYMAP_ACTION_COUNT)
+		return false;
+
+	if (keycode == SDLK_UNKNOWN)
+		return false;
+
+	bindings[action].keycode = keycode;
+	bindings[action].modsMask = modsMask;
+	return true;
+}
+
+#ifdef __EMSCRIPTEN__
+EMSCRIPTEN_KEEPALIVE void ft2_keymap_reset_defaults(void)
+{
+	keymapResetDefaults();
+}
+
+EMSCRIPTEN_KEEPALIVE int32_t ft2_keymap_get_binding_packed(int32_t action)
+{
+	return keymapGetBindingPacked(action);
+}
+
+EMSCRIPTEN_KEEPALIVE int32_t ft2_keymap_set_binding(int32_t action, int32_t keycode, int32_t modsMask)
+{
+	return keymapSetBinding(action, (SDL_Keycode)keycode, (uint8_t)modsMask) ? 1 : 0;
+}
+#endif

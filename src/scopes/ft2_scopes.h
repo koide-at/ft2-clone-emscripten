@@ -34,6 +34,8 @@ bool testScopesMouseDown(void);
 void drawScopes(void);
 void drawScopeFramework(void);
 bool initScopes(void);
+/* Web + no pthreads: scope thread cannot start; call once per frame from main loop. */
+void ft2_scopes_tick_singlethread_web(void);
 
 // actual scope data
 typedef struct scope_t

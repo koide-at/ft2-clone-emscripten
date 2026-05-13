@@ -19,6 +19,9 @@
 #include "ft2_audio.h"
 #include "ft2_wav_renderer.h"
 #include "ft2_structs.h"
+#ifdef __EMSCRIPTEN__
+#include "ft2_emscripten.h"
+#endif
 
 #define UPDATE_VISUALS_AT_TICK 4
 #define TICKS_PER_RENDER_CHUNK 64
@@ -192,7 +195,7 @@ void exitWavRenderer(void)
 static bool dump_Init(uint32_t frq, int16_t amp, int16_t songPos)
 {
 	int32_t bytesPerSample = (WDBitDepth / 8) * 2; // 2 channels
-	int32_t maxSamplesPerTick = (int32_t)ceil(frq / (MIN_BPM / 2.5)) + 2; // +2 needed
+	int32_t maxSamplesPerTick = (int32_t)ceil(frq / (MIN_BPM / 2.5)) + 1;
 
 	// *2 for stereo
 	wavRenderBuffer = (uint8_t *)malloc((TICKS_PER_RENDER_CHUNK * maxSamplesPerTick) * bytesPerSample);
@@ -424,6 +427,14 @@ static int32_t renderWavThread(void *ptr)
 	dump_Close(f, sampleCounter);
 	resumeAudio();
 
+#ifdef __EMSCRIPTEN__
+	{
+		char *fn = getDiskOpFilename();
+		if (fn != NULL)
+			ft2_ems_offer_download_path(fn);
+	}
+#endif
+
 	if (overflow)
 		okBoxThreadSafe(0, "System message", "Rendering stopped, file exceeded 2GB!", NULL);
 
@@ -438,7 +449,7 @@ static int32_t renderWavIndividualTracksThread(void *ptr)
 	(void)ptr;
 
 	int32_t bytesPerSample = (WDBitDepth / 8) * 2; // 2 channels
-	int32_t maxSamplesPerTick = (int32_t)ceil(WDFrequency / (MIN_BPM / 2.5)) + 2; // +2 because some headroom is needed
+	int32_t maxSamplesPerTick = (int32_t)ceil(WDFrequency / (MIN_BPM / 2.5)) + 1;
 
 	// *2 for stereo
 	wavRenderBuffer = (uint8_t *)malloc((TICKS_PER_RENDER_CHUNK * maxSamplesPerTick) * bytesPerSample);
@@ -635,6 +646,9 @@ static int32_t renderWavIndividualTracksThread(void *ptr)
 		// write main header
 		fwrite(&wavHeader, 1, sizeof (wavHeader_t), f);
 		fclose(f);
+#ifdef __EMSCRIPTEN__
+		ft2_ems_offer_download_path(newFilename);
+#endif
 	}
 
 	free(wavRenderBuffer);
@@ -698,6 +712,14 @@ static void wavRender(bool checkOverwrite)
 	}
 
 	mouseAnimOn();
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	if (renderIndividualTracks)
+		renderWavIndividualTracksThread(NULL);
+	else
+		renderWavThread(NULL);
+	return;
+#endif
+
 	thread = SDL_CreateThread(renderIndividualTracks ? renderWavIndividualTracksThread : renderWavThread, "WAV render thread", NULL);
 	if (thread == NULL)
 	{
@@ -723,12 +745,7 @@ void pbWavFreqUp(void)
 {
 	if (WDFrequency < MAX_WAV_RENDER_FREQ)
 	{
-		     if (WDFrequency ==   8000) WDFrequency = 11025;
-		else if (WDFrequency ==  11025) WDFrequency = 16000;
-		else if (WDFrequency ==  16000) WDFrequency = 22050;
-		else if (WDFrequency ==  22050) WDFrequency = 32000;
-		else if (WDFrequency ==  32000) WDFrequency = 44100;
-		else if (WDFrequency ==  44100) WDFrequency = 48000;
+		     if (WDFrequency ==  44100) WDFrequency = 48000;
 		else if (WDFrequency ==  48000) WDFrequency = 96000;
 		else if (WDFrequency ==  96000) WDFrequency = 192000;
 		else if (WDFrequency == 192000) WDFrequency = 384000;
@@ -745,11 +762,6 @@ void pbWavFreqDown(void)
 		else if (WDFrequency == 192000) WDFrequency = 96000;
 		else if (WDFrequency ==  96000) WDFrequency = 48000;
 		else if (WDFrequency ==  48000) WDFrequency = 44100;
-		else if (WDFrequency ==  44100) WDFrequency = 32000;
-		else if (WDFrequency ==  32000) WDFrequency = 22050;
-		else if (WDFrequency ==  22050) WDFrequency = 16000;
-		else if (WDFrequency ==  16000) WDFrequency = 11025;
-		else if (WDFrequency ==  11025) WDFrequency = 8000;
 
 		updateWavRenderer();
 	}

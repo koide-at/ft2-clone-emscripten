@@ -530,6 +530,11 @@ void clearCopyBuffer(void)
 	smpCopyDidCopyWholeSample = false;
 }
 
+int32_t getSampleMiddleCRate(sample_t *s)
+{
+	return (int32_t)(getSampleC4Hz(s) + 0.5); // rounded
+}
+
 int32_t getSampleRangeStart(void)
 {
 	return smpEd_Rx1;
@@ -736,6 +741,11 @@ void copySmp(void) // copy sample from srcInstr->srcSmp to curInstr->curSmp
 		return;
 
 	mouseAnimOn();
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	copySampleThread(NULL);
+	return;
+#endif
+
 	thread = SDL_CreateThread(copySampleThread, "copy sample thread", NULL);
 	if (thread == NULL)
 	{
@@ -1994,6 +2004,11 @@ void sampCut(void)
 		return;
 
 	mouseAnimOn();
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	sampCutThread(NULL);
+	return;
+#endif
+
 	thread = SDL_CreateThread(sampCutThread, "sample cut thread", NULL);
 	if (thread == NULL)
 	{
@@ -2042,6 +2057,11 @@ void sampCopy(void)
 		return;
 
 	mouseAnimOn();
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	sampCopyThread(NULL);
+	return;
+#endif
+
 	thread = SDL_CreateThread(sampCopyThread, "sample copy thread", NULL);
 	if (thread == NULL)
 	{
@@ -2253,6 +2273,11 @@ void sampPaste(void)
 	}
 
 	mouseAnimOn();
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	sampPasteThread(NULL);
+	return;
+#endif
+
 	thread = SDL_CreateThread(sampPasteThread, "sample paste thread", NULL);
 	if (thread == NULL)
 	{
@@ -2308,6 +2333,11 @@ void sampCrop(void)
 		return; // nothing to crop (the whole sample is marked)
 
 	mouseAnimOn();
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	sampCropThread(NULL);
+	return;
+#endif
+
 	thread = SDL_CreateThread(sampCropThread, "sample crop thread", NULL);
 	if (thread == NULL)
 	{
@@ -2675,6 +2705,11 @@ void rbSample8bit(void)
 	if (okBox(2, "System request", "Pre-convert sample data?", NULL) == 1)
 	{
 		mouseAnimOn();
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+		convSmp8Bit(NULL);
+		return;
+#endif
+
 		thread = SDL_CreateThread(convSmp8Bit, "sample convert thread", NULL);
 		if (thread == NULL)
 		{
@@ -2743,6 +2778,11 @@ void rbSample16bit(void)
 	if (okBox(2, "System request", "Pre-convert sample data?", NULL) == 1)
 	{
 		mouseAnimOn();
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+		convSmp16Bit(NULL);
+		return;
+#endif
+
 		thread = SDL_CreateThread(convSmp16Bit, "sample convert thread", NULL);
 		if (thread == NULL)
 		{
@@ -3607,6 +3647,11 @@ void sampleBackwards(void)
 		return;
 
 	mouseAnimOn();
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	sampleBackwardsThread(NULL);
+	return;
+#endif
+
 	thread = SDL_CreateThread(sampleBackwardsThread, "sample modification thread", NULL);
 	if (thread == NULL)
 	{
@@ -3656,6 +3701,11 @@ void sampleChangeSign(void)
 		return;
 
 	mouseAnimOn();
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	sampleChangeSignThread(NULL);
+	return;
+#endif
+
 	thread = SDL_CreateThread(sampleChangeSignThread, "sample modification thread", NULL);
 	if (thread == NULL)
 	{
@@ -3710,6 +3760,11 @@ void sampleByteSwap(void)
 	}
 
 	mouseAnimOn();
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	sampleByteSwapThread(NULL);
+	return;
+#endif
+
 	thread = SDL_CreateThread(sampleByteSwapThread, "sample modification thread", NULL);
 	if (thread == NULL)
 	{
@@ -3820,6 +3875,11 @@ void fixDC(void)
 		return;
 
 	mouseAnimOn();
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	fixDCThread(NULL);
+	return;
+#endif
+
 	thread = SDL_CreateThread(fixDCThread, "sample modification thread", NULL);
 	if (thread == NULL)
 	{

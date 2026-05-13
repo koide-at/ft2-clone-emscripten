@@ -257,6 +257,32 @@ char *cp850ToUtf8(char *src)
 	if (srcLen <= 0)
 		return NULL;
 
+#ifdef __EMSCRIPTEN__
+	/* Latin-1 style expansion: close enough for ASCII module names when iconv has no 850. */
+	{
+		char *outBuf = (char *)malloc(srcLen * 2 + 1);
+		if (outBuf == NULL)
+			return NULL;
+		size_t j = 0;
+
+		for (size_t i = 0; i < srcLen; i++)
+		{
+			unsigned char b = (unsigned char)src[i];
+
+			if (b < 0x80)
+				outBuf[j++] = (char)b;
+			else
+			{
+				outBuf[j++] = (char)(0xC0 | (b >> 6));
+				outBuf[j++] = (char)(0x80 | (b & 0x3F));
+			}
+		}
+
+		outBuf[j] = '\0';
+		return outBuf;
+	}
+#endif
+
 	iconv_t cd = iconv_open("UTF-8", "850");
 	if (cd == (iconv_t)-1)
 		return NULL;
@@ -298,6 +324,49 @@ char *utf8ToCp850(char *src, bool removeIllegalChars)
 	size_t srcLen = strlen(src);
 	if (srcLen <= 0)
 		return NULL;
+
+#ifdef __EMSCRIPTEN__
+	/* Wasm libc iconv typically does not provide CP850; keep UI strings working. */
+	{
+		char *outBuf = (char *)malloc(srcLen + 1);
+		if (outBuf == NULL)
+			return NULL;
+		size_t j = 0;
+
+		for (size_t i = 0; i < srcLen; )
+		{
+			unsigned char c = (unsigned char)src[i];
+
+			if (c < 0x80)
+			{
+				if (removeIllegalChars && c < 32)
+					outBuf[j++] = ' ';
+				else
+					outBuf[j++] = (char)c;
+				i++;
+			}
+			else
+			{
+				size_t skip = 1;
+
+				if ((c & 0xE0) == 0xC0)
+					skip = 2;
+				else if ((c & 0xF0) == 0xE0)
+					skip = 3;
+				else if ((c & 0xF8) == 0xF0)
+					skip = 4;
+				if (i + skip > srcLen)
+					skip = 1;
+
+				outBuf[j++] = '?';
+				i += skip;
+			}
+		}
+
+		outBuf[j] = '\0';
+		return outBuf;
+	}
+#endif
 
 #ifdef __APPLE__
 	iconv_t cd = iconv_open("850//TRANSLIT//IGNORE", "UTF-8-MAC");

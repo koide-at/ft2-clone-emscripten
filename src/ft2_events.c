@@ -32,6 +32,7 @@
 #include "ft2_sample_ed.h"
 #include "ft2_sample_ed_features.h"
 #include "ft2_structs.h"
+#include "scopes/ft2_scopes.h"
 
 #define CRASH_TEXT "Oh no! The Fasttracker II clone has crashed...\nA backup of the song was hopefully " \
                    "saved to the current module directory.\n\nPlease report this bug if you can.\n" \
@@ -72,6 +73,12 @@ void handleThreadEvents(void)
 void handleEvents(void)
 {
 #ifdef HAS_MIDI
+#ifdef __EMSCRIPTEN__
+#	if !defined(__EMSCRIPTEN_PTHREADS__)
+	ft2_scopes_tick_singlethread_web();
+#	endif
+	ft2_midi_tick_web_ports();
+#endif
 	// called after MIDI has been initialized
 	if (midi.rescanDevicesFlag)
 	{
@@ -120,6 +127,8 @@ void handleEvents(void)
 		editor.diskOpReadDir = false;
 		diskOp_StartDirReadThread();
 	}
+
+	diskOp_TickWebDirRead();
 
 	if (editor.diskOpReadDone)
 	{

@@ -22,6 +22,9 @@
 #include "ft2_bmp.h"
 #include "ft2_structs.h"
 #include "ft2_bmp.h"
+#ifdef __EMSCRIPTEN__
+#include "ft2_emscripten.h"
+#endif
 
 #ifdef _MSC_VER
 #pragma pack(push)
@@ -234,6 +237,11 @@ void copyInstr(void) // dstInstr = srcInstr
 		return;
 
 	mouseAnimOn();
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	copyInstrThread(NULL);
+	return;
+#endif
+
 	thread = SDL_CreateThread(copyInstrThread, "instrument copy thread", NULL);
 	if (thread == NULL)
 	{
@@ -473,26 +481,41 @@ static void drawPanning(void)
 	hexOutBg(505, 191, PAL_FORGRND, PAL_DESKTOP, s->panning, 2);
 }
 
-void drawSampleC4Hz(void)
+void drawC4Rate(void)
 {
-	char str[16];
+	fillRect(472, 299, 64, 8, PAL_DESKTOP);
 
-	fillRect(472, 299, 56, 8, PAL_DESKTOP);
-
-	int32_t C4Hz = 0;
+	double dC4Hz = 0.0;
 	if (editor.curInstr != 0)
 	{
 		instr_t *ins = instr[editor.curInstr];
 		if (ins != NULL)
-		{
-			C4Hz = getSampleC4Hz(&ins->smp[editor.curSmp]);
-			if (C4Hz > 999999)
-				C4Hz = 999999;
-		}
+			dC4Hz = getSampleC4Hz(&ins->smp[editor.curSmp]);
 	}
-	
-	sprintf(str, "%dHz", C4Hz);
+
+	if (dC4Hz <= 0.0) // can happen in several cases
+	{
+		textOut(472, 299, PAL_FORGRND, "0Hz");
+		return;
+	}
+
+	// display rate with as many digits as we can fit
+	char str[32];
+	if (dC4Hz < 1000.0)
+		sprintf(str, "%.3fHz", dC4Hz);
+	else if (dC4Hz < 10000.0)
+		sprintf(str, "%.2fHz", dC4Hz);
+	else if (dC4Hz < 100000.0)
+		sprintf(str, "%.1fHz", dC4Hz);
+	else
+		sprintf(str, "%dHz", (int32_t)(dC4Hz + 0.5)); // rounded
+
 	textOut(472, 299, PAL_FORGRND, str);
+}
+
+void drawSampleC4Hz(void)
+{
+	drawC4Rate();
 }
 
 static void drawFineTune(void)
@@ -780,7 +803,7 @@ void relativeNoteOctUp(void)
 		s->relativeNote = 71;
 
 	drawRelativeNote();
-	drawSampleC4Hz();
+	drawC4Rate();
 	setSongModifiedFlag();
 }
 
@@ -797,7 +820,7 @@ void relativeNoteOctDown(void)
 		s->relativeNote = -48;
 
 	drawRelativeNote();
-	drawSampleC4Hz();
+	drawC4Rate();
 	setSongModifiedFlag();
 }
 
@@ -812,7 +835,7 @@ void relativeNoteUp(void)
 	{
 		s->relativeNote++;
 		drawRelativeNote();
-		drawSampleC4Hz();
+		drawC4Rate();
 		setSongModifiedFlag();
 	}
 }
@@ -828,7 +851,7 @@ void relativeNoteDown(void)
 	{
 		s->relativeNote--;
 		drawRelativeNote();
-		drawSampleC4Hz();
+		drawC4Rate();
 		setSongModifiedFlag();
 	}
 }
@@ -1344,7 +1367,7 @@ void setFinetuneScroll(uint32_t pos)
 	{
 		s->finetune = (int8_t)(pos - 128);
 		drawFineTune();
-		drawSampleC4Hz();
+		drawC4Rate();
 		setSongModifiedFlag();
 	}
 }
@@ -2212,7 +2235,7 @@ void updateInstEditor(void)
 	drawVibSpeed();
 	drawVibDepth();
 	drawVibSweep();
-	drawSampleC4Hz();
+	drawC4Rate();
 	drawRelativeNote();
 
 	// set scroll bars
@@ -3066,6 +3089,12 @@ static int32_t saveInstrThread(void *ptr)
 	editor.diskOpReadDir = true; // force diskop re-read
 	setMouseBusy(false);
 
+#ifdef __EMSCRIPTEN__
+	if (editor.tmpFilenameU != NULL)
+		ft2_ems_offer_download_path((const char *)editor.tmpFilenameU);
+	ft2_ems_sync_fs_out();
+#endif
+
 	return true;
 
 saveError:
@@ -3089,6 +3118,11 @@ void saveInstr(UNICHAR *filenameU, int16_t insNum)
 	UNICHAR_STRCPY(editor.tmpFilenameU, filenameU);
 
 	mouseAnimOn();
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	saveInstrThread(NULL);
+	return;
+#endif
+
 	thread = SDL_CreateThread(saveInstrThread, "instrument save thread", NULL);
 	if (thread == NULL)
 	{
@@ -3518,6 +3552,9 @@ void loadInstr(UNICHAR *filenameU)
 	{
 		// load as instrument
 		mouseAnimOn();
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+		loadInstrThread(NULL);
+#else
 		thread = SDL_CreateThread(loadInstrThread, "instrument load thread", NULL);
 		if (thread == NULL)
 		{
@@ -3526,6 +3563,7 @@ void loadInstr(UNICHAR *filenameU)
 		}
 
 		SDL_DetachThread(thread);
+#endif
 	}
 	else
 	{

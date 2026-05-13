@@ -38,9 +38,18 @@
 #include "ft2_structs.h"
 #include "ft2_hpc.h"
 #include "ft2_smpfx.h"
+#ifdef __EMSCRIPTEN__
+#include <emscripten/emscripten.h>
+#include <emscripten/html5.h>
+#include "ft2_emscripten.h"
+#endif
 
 static void initializeVars(void);
 static void cleanUpAndExit(void); // never call this inside the main loop
+#ifdef __EMSCRIPTEN__
+static void emscriptenMainLoopIteration(void);
+static void emscriptenForceCanvasSize(void);
+#endif
 #ifdef __APPLE__
 static void osxSetDirToProgramDirFromArgs(char **argv);
 #endif
@@ -143,7 +152,15 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 
+#ifdef __EMSCRIPTEN__
+	ft2_ems_chdir_persistent();
+#endif
+
 	SDL_SetHint("SDL_MOUSE_FOCUS_CLICKTHROUGH", "1");
+#ifdef __EMSCRIPTEN__
+	/* Avoid devicePixelRatio-based coordinate mismatch in browser builds. */
+	SDL_SetHint("SDL_VIDEO_HIGHDPI_DISABLED", "1");
+#endif
 	SDL_EventState(SDL_DROPFILE, SDL_ENABLE);
 
 	/* Text input is started by default in SDL2, turn it off to remove ~2ms spikes per key press.
@@ -164,6 +181,11 @@ int main(int argc, char *argv[])
 	}
 
 	loadConfigOrSetDefaults(); // config must be loaded at this exact point
+#ifdef __EMSCRIPTEN__
+	/* Web build: avoid startup fullscreen, it causes scaling/input mismatch in browsers. */
+	config.windowFlags &= ~START_IN_FULLSCR;
+	video.windowModeUpscaleFactor = 1;
+#endif
 
 	if (!setupWindow() || !setupRenderer())
 	{
@@ -171,6 +193,11 @@ int main(int argc, char *argv[])
 		cleanUpAndExit();
 		return 1;
 	}
+
+#ifdef __EMSCRIPTEN__
+	/* Force 1:1 logical/input coordinates in browser builds. */
+	emscriptenForceCanvasSize();
+#endif
 
 #ifdef _WIN32
 	// allow only one instance, and send arguments to it (what song to play)
@@ -231,7 +258,10 @@ int main(int argc, char *argv[])
 	}
 
 #ifdef HAS_MIDI
-	// MIDI init can take several seconds, use thread
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	initMidiFunc(NULL);
+#elif defined(__APPLE__) || defined(__EMSCRIPTEN__)
+	// MIDI init can take several seconds on Mac / async Web MIDI, use thread
 	midi.initMidiThread = SDL_CreateThread(initMidiFunc, "MIDI init thread", NULL);
 	if (midi.initMidiThread == NULL)
 	{
@@ -239,6 +269,9 @@ int main(int argc, char *argv[])
 		cleanUpAndExit();
 		return 1;
 	}
+#else
+	initMidiFunc(NULL);
+#endif
 #endif
 
 	hpc_ResetCounters(&video.vblankHpc); // quirk: this is needed for potential okBox() calls in handleModuleLoadFromArg()
@@ -247,6 +280,10 @@ int main(int argc, char *argv[])
 	editor.mainLoopOngoing = true;
 	hpc_ResetCounters(&video.vblankHpc); // this must be the last thing we do before entering the main loop
 
+#ifdef __EMSCRIPTEN__
+	emscripten_set_main_loop(emscriptenMainLoopIteration, 0, 1);
+	return 0;
+#else
 	while (editor.programRunning)
 	{
 		beginFPSCounter();
@@ -263,7 +300,39 @@ int main(int argc, char *argv[])
 
 	cleanUpAndExit();
 	return 0;
+#endif
 }
+
+#ifdef __EMSCRIPTEN__
+static void emscriptenForceCanvasSize(void)
+{
+	emscripten_set_canvas_element_size("#canvas", SCREEN_W, SCREEN_H);
+}
+
+static void emscriptenMainLoopIteration(void)
+{
+	/* SDL/Emscripten may resize canvas behind our back (HiDPI/fullscreen paths). */
+	emscriptenForceCanvasSize();
+
+	if (!editor.programRunning)
+	{
+		if (config.cfg_AutoSave)
+			saveConfig(CONFIG_HIDE_ERRORS);
+
+		cleanUpAndExit();
+		emscripten_cancel_main_loop();
+		return;
+	}
+
+	beginFPSCounter();
+	handleThreadEvents();
+	readInput();
+	handleEvents();
+	handleRedrawing();
+	flipFrame();
+	endFPSCounter();
+}
+#endif
 
 static void initializeVars(void)
 {
@@ -334,15 +403,15 @@ static void initializeVars(void)
 static void cleanUpAndExit(void) // never call this inside the main loop!
 {
 #ifdef HAS_MIDI
-	// we used a thread to init MIDI (as it could take several seconds)
+#if defined(__APPLE__) || defined(__EMSCRIPTEN__)
 	if (midi.initMidiThread != NULL)
 	{
 		SDL_WaitThread(midi.initMidiThread, NULL);
 		midi.initMidiThread = NULL;
 	}
-
+#endif
 	midi.enable = false; // stop MIDI callback from doing things
-	while (midi.callbackBusy) SDL_Delay(10); // wait for MIDI callback to finish
+	while (midi.callbackBusy) SDL_Delay(1); // wait for MIDI callback to finish
 
 	closeMidiInDevice();
 	freeMidiIn();
@@ -394,6 +463,10 @@ static void cleanUpAndExit(void) // never call this inside the main loop!
 
 #ifdef _WIN32
 	closeSingleInstancing();
+#endif
+
+#ifdef __EMSCRIPTEN__
+	ft2_ems_sync_fs_out();
 #endif
 
 	SDL_Quit();

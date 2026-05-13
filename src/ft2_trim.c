@@ -1190,6 +1190,21 @@ void pbTrimDoTrim(void)
 	mouseAnimOn();
 	pauseAudio();
 
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	trimThreadFunc(NULL);
+	if (editor.trimThreadWasDone)
+	{
+		editor.trimThreadWasDone = false;
+		trimThreadDone();
+	}
+	else
+	{
+		resumeAudio();
+		mouseAnimOff();
+	}
+	return;
+#endif
+
 	trimThread = SDL_CreateThread(trimThreadFunc, "trim thread", NULL);
 	if (trimThread == NULL)
 	{

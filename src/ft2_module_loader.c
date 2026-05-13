@@ -26,6 +26,7 @@
 #include "ft2_video.h"
 #include "ft2_structs.h"
 #include "ft2_sysreqs.h"
+#include "ft2_module_loader.h"
 
 bool detectBEM(FILE *f);
 bool loadBEM(FILE *f, uint32_t filesize);
@@ -254,6 +255,13 @@ void loadMusic(UNICHAR *filenameU)
 	UNICHAR_STRCPY(editor.tmpFilenameU, filenameU);
 
 	musicIsLoading = true;
+
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	/* No SDL threads in ST wasm; load on main thread (okBox yields with ASYNCIFY). */
+	doLoadMusic(false);
+	handleLoadMusicEvents();
+	return;
+#endif
 
 	thread = SDL_CreateThread(loadMusicThread, "mod load thread", NULL);
 	if (thread == NULL)

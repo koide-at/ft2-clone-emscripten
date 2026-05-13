@@ -42,6 +42,7 @@ int32_t getExtOffset(char *s, int32_t stringLen); // get byte offset of file ext
 bool testDiskOpMouseDown(bool mouseHeldDown);
 void testDiskOpMouseRelease(void);
 void diskOp_StartDirReadThread(void);
+void diskOp_TickWebDirRead(void);
 void diskOp_DrawFilelist(void);
 void diskOp_DrawDirectory(void);
 void showDiskOpScreen(void);

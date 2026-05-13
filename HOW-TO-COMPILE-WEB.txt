@@ -1,0 +1,68 @@
+---- Building ft2-clone for the Web (Emscripten) ----
+
+Requirements:
+ - Emscripten SDK (emsdk) with emcc in PATH
+ - CMake 3.14+
+
+1) Install Emscripten (one-time). Example using the official emsdk:
+
+   cd ~
+   git clone https://github.com/emscripten-core/emsdk.git
+   cd emsdk
+   ./emsdk install latest
+   ./emsdk activate latest
+   source ./emsdk_env.sh
+
+   Put the last line in ~/.zshrc or ~/.bashrc if you want emcc available in every new terminal.
+
+   If you see "emcc not found", run source "$HOME/emsdk/emsdk_env.sh" in that terminal,
+   or use ./make-web.sh which tries to find emsdk under $HOME/emsdk automatically.
+
+2) From the ft2-clone directory:
+
+   chmod +x make-web.sh
+   # stable web build path at the moment:
+   FT2_WEB_PTHREADS=OFF ./make-web.sh
+
+   Or manually (EMSCRIPTEN must be the folder that contains emcc, e.g. ~/emsdk/upstream/emscripten):
+
+   export EMSCRIPTEN="$HOME/emsdk/upstream/emscripten"
+   cmake -S . -B build-emscripten -DCMAKE_BUILD_TYPE=Release \
+     -DCMAKE_TOOLCHAIN_FILE="$EMSCRIPTEN/cmake/Modules/Platform/Emscripten.cmake"
+   cmake --build build-emscripten --parallel
+   # If you change src/web/ft2_prejs.js or shell.html and the UI behaviour does not update,
+   # run: cmake --build build-emscripten --clean-first  (embeds pre-js at link time)
+
+Output (local only; not in Git): release/other/index.html plus index.js, index.wasm, and ft2-web-toolbar-icon.png (toolbar logo; copied by the build next to index.html)
+
+3) You MUST serve the files over HTTP with cross-origin isolation headers
+   so pthreads / SharedArrayBuffer work. Example:
+
+   python3 serve_web.py --dir release/other
+   # Open http://127.0.0.1:8765/ or http://127.0.0.1:8765/index.html
+
+4) Notes:
+ - After rebuilding, hard-reload the page (disable cache) so the browser loads new index.js.
+ - Disk op. (single-thread web): By default FT2_WEB_DISKOP_DUMMY=OFF so the file list under
+   /ft2_persistent is real (chunked read; no sort on main thread to reduce freezes). Set
+   FT2_WEB_DISKOP_DUMMY=ON if you need the old placeholder list only.
+- Use "Display size" 1× / 2× / 3× / Fit (top bar, above the app) to scale the canvas in CSS;
+  default is 2×, and Fit scales to current window size while internal resolution stays 632×400
+  (stored in localStorage as ft2_display_scale).
+ - Use the "Import to Disk op." button (top bar, above the app) to copy local files into the current Disk op.
+- Use `Keybinds` in the top bar to remap web shortcuts, show duplicate warnings (saving allowed),
+  reset defaults, and persist settings across reloads (localStorage).
+   directory (IDBFS); then pick the file in Disk op. to load it.
+ - Configuration and Disk Op files are stored under IndexedDB (IDBFS) in /ft2_persistent.
+ - Saving modules, WAV renders, or samples triggers a browser download of the file as well
+   as writing to the virtual filesystem.
+ - Web MIDI is used instead of RtMidi when running in the browser.
+ - If the page hangs on load, make sure you built with FT2_WEB_PTHREADS=OFF and hard-reload.
+ - Single-thread builds link with -sASYNCIFY so nested dialogs (okBox/Zap) and Disk op. can yield
+   to the browser between frames; rebuild after pulling changes (clean cmake if link errors occur).
+
+5) Quick smoke test checklist:
+ - App starts and UI is visible.
+ - Load an XM and verify playback starts.
+ - Save module/sample/WAV and verify browser download starts.
+ - Reload page and verify settings persist.

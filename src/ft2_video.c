@@ -34,6 +34,9 @@
 #include "ft2_midi.h"
 #include "ft2_bmp.h"
 #include "ft2_structs.h"
+#ifdef __EMSCRIPTEN__
+#include <emscripten/emscripten.h>
+#endif
 
 static const uint8_t textCursorData[12] =
 {
@@ -324,13 +327,21 @@ static void updateRenderSizeVars(void)
 	else
 	{
 		// windowed mode
-
+#ifdef __EMSCRIPTEN__
+		video.windowW = SCREEN_W;
+		video.windowH = SCREEN_H;
+		video.renderW = SCREEN_W;
+		video.renderH = SCREEN_H;
+		video.dDpiZoomFactorX = 1.0;
+		video.dDpiZoomFactorY = 1.0;
+#else
 		SDL_GetWindowSize(video.window, &video.renderW, &video.renderH);
 
 		// get DPI zoom factors (Macs with Retina, etc... returns 1.0 if no zoom)
 		SDL_GL_GetDrawableSize(video.window, &widthInPixels, &heightInPixels);
 		video.dDpiZoomFactorX = (double)widthInPixels / video.windowW;
 		video.dDpiZoomFactorY = (double)heightInPixels / video.windowH;
+#endif
 	}
 
 	// "hardware mouse" calculations
@@ -340,8 +351,20 @@ static void updateRenderSizeVars(void)
 
 void enterFullscreen(void)
 {
+#ifdef __EMSCRIPTEN__
+	EM_ASM(
+		try
+		{
+			var c = Module.canvas || document.getElementById('canvas');
+			if (c && c.requestFullscreen)
+				c.requestFullscreen();
+		}
+		catch (e) {}
+	);
+#else
 	SDL_SetWindowFullscreen(video.window, SDL_WINDOW_FULLSCREEN_DESKTOP);
 	SDL_Delay(15); // fixes possible issues
+#endif
 
 	updateRenderSizeVars();
 	updateMouseScaling();
@@ -350,17 +373,30 @@ void enterFullscreen(void)
 
 void leaveFullscreen(void)
 {
+#ifdef __EMSCRIPTEN__
+	EM_ASM(
+		try
+		{
+			if (document.fullscreenElement && document.exitFullscreen)
+				document.exitFullscreen();
+		}
+		catch (e) {}
+	);
+#else
 	SDL_SetWindowFullscreen(video.window, 0);
 	SDL_Delay(15); // fixes possible issues
 
 	setWindowSizeFromConfig(false); // false = do not change actual window size, only update variables
+#ifndef __EMSCRIPTEN__
 	SDL_SetWindowSize(video.window, SCREEN_W * video.windowModeUpscaleFactor, SCREEN_H * video.windowModeUpscaleFactor);
+#endif
+#endif
 
 	updateRenderSizeVars();
 	updateMouseScaling();
 	setMousePosToCenter();
 
-#ifdef __unix__ // can be required on Linux... (or else the window keeps moving down every time you leave fullscreen)
+#if defined(__unix__) && !defined(__EMSCRIPTEN__) // can be required on Linux...
 	SDL_SetWindowPosition(video.window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
 #endif
 }
@@ -834,10 +870,14 @@ void setWindowSizeFromConfig(bool updateRenderer)
 
 	if (updateRenderer)
 	{
+#ifndef __EMSCRIPTEN__
+		/* Web: window/canvas stay at SCREEN_W x SCREEN_H (see setupWindow, emscriptenForceCanvasSize).
+		   SDL_SetWindowSize with upscale breaks SDL_RenderCopy scaling vs. fixed canvas. */
 		SDL_SetWindowSize(video.window, SCREEN_W * video.windowModeUpscaleFactor, SCREEN_H * video.windowModeUpscaleFactor);
 
 		if (oldUpscaleFactor != video.windowModeUpscaleFactor)
 			SDL_SetWindowPosition(video.window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+#endif
 
 		updateRenderSizeVars();
 		updateMouseScaling();
@@ -907,6 +947,10 @@ bool setupWindow(void)
 	video.vsync60HzPresent = false;
 
 	uint32_t windowFlags = SDL_WINDOW_ALLOW_HIGHDPI;
+#ifdef __EMSCRIPTEN__
+	/* Web build: avoid high-DPI drawable scaling (causes cropped magnified output). */
+	windowFlags &= ~SDL_WINDOW_ALLOW_HIGHDPI;
+#endif
 #if defined (__APPLE__) || defined (_WIN32) // yet another quirk!
 	windowFlags |= SDL_WINDOW_HIDDEN;
 #endif
@@ -932,9 +976,14 @@ bool setupWindow(void)
 	if (config.windowFlags & FORCE_VSYNC_OFF)
 		video.vsync60HzPresent = false;
 
+#ifdef __EMSCRIPTEN__
+	video.window = SDL_CreateWindow("", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
+		SCREEN_W, SCREEN_H, windowFlags);
+#else
 	video.window = SDL_CreateWindow("", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
 		SCREEN_W * video.windowModeUpscaleFactor, SCREEN_H * video.windowModeUpscaleFactor,
 		windowFlags);
+#endif
 
 	if (video.window == NULL)
 	{
@@ -956,6 +1005,11 @@ bool setupRenderer(void)
 	uint32_t rendererFlags = 0;
 	if (video.vsync60HzPresent)
 		rendererFlags |= SDL_RENDERER_PRESENTVSYNC;
+
+#ifdef __EMSCRIPTEN__
+	/* Web build: software renderer is slower, but avoids WebGL scaling/cropping issues. */
+	SDL_SetHint(SDL_HINT_RENDER_DRIVER, "software");
+#endif
 
 	video.renderer = SDL_CreateRenderer(video.window, -1, rendererFlags);
 	if (video.renderer == NULL)

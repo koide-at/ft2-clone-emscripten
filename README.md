@@ -1,19 +1,34 @@
 # ft2-clone
+
 Fasttracker II clone for Windows/macOS/Linux
 
-Aims to be a highly accurate clone of the classic Fasttracker II software for MS-DOS. \
-The XM player itself has been directly ported from the original source code, for maximum accuracy. \
+Aims to be a highly accurate clone of the classic Fasttracker II software for MS-DOS.  
+The XM player itself has been directly ported from the original source code, for maximum accuracy.  
 The code is partly my own, partly based on the original FT2 code.
 
 *What is Fasttracker II? Read about it on [Wikipedia](https://en.wikipedia.org/wiki/FastTracker_2).*
 
+# Web (Emscripten) build and GitHub fork
+
+Browser builds use Emscripten; see [HOW-TO-COMPILE-WEB.txt](HOW-TO-COMPILE-WEB.txt).  
+Build outputs under `release/other/` (`index.html`, `index.js`, `index.wasm`, etc.) are **not** tracked in Git; run `./make-web.sh` locally (or produce them in CI) before serving or packaging.
+
+Maintainer fork (Emscripten port branch **`web-emscripten`**): [koide-at/ft2-clone-emscripten](https://github.com/koide-at/ft2-clone-emscripten).  
+Upstream source project: [8bitbubsy/ft2-clone](https://github.com/8bitbubsy/ft2-clone).
+
+Fork/sync procedure for maintainers lives in `WEB_GITHUB_WORKFLOW.md` **only on local checkouts**; that file is listed in `.gitignore` and is not pushed to GitHub.
+
+To push this tree to **`origin` branch `web-emscripten`** (after `gh auth login` or SSH remote), from `ft2-clone/` run: **`./scripts/push-to-web-emscripten.sh`**
+
 # Releases
+
 Windows/macOS binary releases can always be found at [16-bits.org](https://16-bits.org/ft2.php).
 
-Linux binaries can be found [here](https://repology.org/project/fasttracker2/versions). \
+Linux binaries can be found [here](https://repology.org/project/fasttracker2/versions).  
 If these don't work for you, you'll have to compile the code manually.
 
 # Improvements over original DOS version
+
 - New sample editor features, like waveform generators and resonant filters
 - The channel resampler/mixer uses floating-point arithmetics for less errors, and has extra interpolation options (4-point cubic spline and 8-point/16-point windowed-sinc)
 - The sample loader supports AIFF/FLAC/OGG/MP3/BRR (SNES) samples and more WAV types than original FT2. It will also attempt to tune the sample (finetune and rel. note) to its playback frequency on load.
@@ -29,16 +44,17 @@ If these don't work for you, you'll have to compile the code manually.
 
 # Screenshots
 
-![Example #1](https://16-bits.org/ft2-clone-3.png)
-![Example #2](https://16-bits.org/ft2-clone-4.png)
+Example #1
+Example #2
 
 # Compiling the code
+
 Build instructions can be found in the repository (HOW-TO-COMPILE.txt).
 
-Keep in mind that the program may fail to compile on Linux, depending on your distribution and GCC version. \
+Keep in mind that the program may fail to compile on Linux, depending on your distribution and GCC version.  
 Please don't nag me about it, and try to use the Linux packages linked to from [16-bits.org](https://16-bits.org/ft2.php) instead.
 
-PS: The source code is quite hackish and hardcoded. \
+PS: The source code is quite hackish and hardcoded.  
 My first priority is to make an accurate clone, and not to make flexible and easily modifiable code.
 
 Big parts of the code (except GUI) are directly ported from the original FT2 source code, with permission to use a BSD 3-Clause license.

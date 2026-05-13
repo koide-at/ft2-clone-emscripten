@@ -29,6 +29,10 @@
 #include "ft2_structs.h"
 #include "mixer/ft2_mix_interpolation.h"
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
+
 static uint32_t logTab[4*12*16], frequencyMulFactor, frequencyDivFactor;
 static uint64_t songTickDuration52fp[(MAX_BPM-MIN_BPM)+1];
 static double dDeltaMul, dScopeDeltaMul, dScopeDrawDeltaMul;
@@ -2350,7 +2354,13 @@ static void getNextPos(void)
 void pauseMusic(void) // stops reading pattern data
 {
 	musicPaused = true;
-	while (replayerBusy);
+	while (replayerBusy)
+	{
+#ifdef __EMSCRIPTEN__
+		/* Main thread must yield or the audio callback never runs (same-thread audio). */
+		emscripten_sleep(1);
+#endif
+	}
 }
 
 void resumeMusic(void) // starts reading pattern data
@@ -3138,7 +3148,9 @@ void playSample(uint8_t chNum, uint8_t insNum, uint8_t smpNum, uint8_t note, uin
 
 	unlockAudio();
 
+#ifndef __EMSCRIPTEN__
 	while (ch->status & CS_TRIGGER_VOICE); // wait for voice to trigger in mixer
+#endif
 
 	// for sampling playback line in Smp. Ed.
 	editor.curPlayInstr = editor.curInstr;
@@ -3201,7 +3213,9 @@ void playRange(uint8_t chNum, uint8_t insNum, uint8_t smpNum, uint8_t note, uint
 
 	unlockAudio();
 
+#ifndef __EMSCRIPTEN__
 	while (ch->status & CS_TRIGGER_VOICE); // wait for voice to trigger in mixer
+#endif
 
 	// for sampling playback line in Smp. Ed.
 	editor.curPlayInstr = editor.curInstr;
@@ -3246,7 +3260,9 @@ void stopVoices(void)
 	resetAudioDither();
 
 	// wait for scope thread to finish, making sure pointers aren't illegal
+#if !(defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__))
 	while (editor.scopeThreadBusy);
+#endif
 
 	if (audioWasntLocked)
 		unlockAudio();
