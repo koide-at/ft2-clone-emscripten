@@ -12,7 +12,8 @@ The code is partly my own, partly based on the original FT2 code.
 
 This repository is a fork of the original.
 The `web-emcsripten` branch has been modified to run in a web browser.
-This modification has been implemented entirely using AI on an experimental basis.
+All changes and new features are implemented using AI.
+You can see how it works on [this page](https://koide-at.github.io/ft2-wasm/).
 
 Browser builds use Emscripten; see [HOW-TO-COMPILE-WEB.txt](HOW-TO-COMPILE-WEB.txt).  
 Build outputs under `release/other/` (`index.html`, `index.js`, `index.wasm`, etc.) are **not** tracked in Git; run `./make-web.sh` locally (or produce them in CI) before serving or packaging.
