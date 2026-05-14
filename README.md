@@ -10,6 +10,10 @@ The code is partly my own, partly based on the original FT2 code.
 
 # Web (Emscripten) build and GitHub fork
 
+This repository is a fork of the original.
+The `web-emcsripten` branch has been modified to run in a web browser.
+This modification has been implemented entirely using AI on an experimental basis.
+
 Browser builds use Emscripten; see [HOW-TO-COMPILE-WEB.txt](HOW-TO-COMPILE-WEB.txt).  
 Build outputs under `release/other/` (`index.html`, `index.js`, `index.wasm`, etc.) are **not** tracked in Git; run `./make-web.sh` locally (or produce them in CI) before serving or packaging.
 
